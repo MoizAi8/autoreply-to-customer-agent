@@ -2,9 +2,10 @@
 
 | Check | Result |
 | --- | --- |
-| Live Gemini sentiment and multilingual output | PASS. Real Gemini 3.5 Flash-Lite inference classified a fictional German complaint and drafted a German response. |
+| Live Gemini sentiment and multilingual output | PASS. Real Gemini 3.5 Flash-Lite inference classified positive, neutral, and negative feedback and drafted replies in English, Urdu, and German. |
 | Live local workflow persistence | PASS. The classified review, draft, completed job, and approval were persisted. |
-| Public frontend and private workspace | Chromium covered responsive landing, the workflow illustration, access gating, CSV preview and import, global search, persisted replies, analytics, and business settings. |
+| Automated backend checks | 148 passed, 49% line coverage across the backend. |
+| Public frontend and private workspace | 10 Chromium scenarios cover a six-size responsive landing check, workflow illustration, access gating, CSV preview and import, global search, persisted replies, analytics, and business settings. |
 | Database migrations | PASS. SQLite and hosted Neon PostgreSQL applied the draft job and quota migration. |
 | Hosted application and AI | BLOCKED. The Production Gemini credential is pending. |
 | Redis worker and external platform connectors | NOT TESTED in the hosted environment. |

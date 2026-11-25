@@ -6,7 +6,9 @@ import { ActivityChart } from '@/components/analytics/activity-chart'
 import { SentimentChart } from '@/components/analytics/sentiment-chart'
 import { PageTransition } from '@/components/layout/page-transition'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import * as api from '@/lib/api'
+import { downloadCsv } from '@/lib/csv'
 
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30)
@@ -16,10 +18,18 @@ export default function AnalyticsPage() {
   const platforms = useQuery({ queryKey: ['platform-performance'], queryFn: api.getPlatformPerformance })
   const data = stats.data
 
+  function downloadReport() {
+    if (!trends.data?.length) return
+    const rows = trends.data.map(({ date, positive, neutral, negative, very_negative }) =>
+      [date, positive, neutral, negative, very_negative],
+    )
+    downloadCsv(`autoreply-sentiment-${days}-days.csv`, [['date', 'positive', 'neutral', 'negative', 'very_negative'], ...rows])
+  }
+
   return (
     <PageTransition>
       <div className="space-y-5">
-        <header><h1 className="text-3xl font-semibold tracking-tight">Feedback analytics</h1><p className="mt-2 text-sm text-muted-foreground">See how customer ratings and response activity change over time.</p></header>
+        <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-3xl font-semibold tracking-tight">Feedback analytics</h1><p className="mt-2 text-sm text-muted-foreground">See how customer ratings and response activity change over time.</p></div><Button variant="outline" disabled={!trends.data?.length} onClick={downloadReport}>Download sentiment CSV</Button></header>
         {stats.isError && <p role="alert" className="text-sm text-destructive">Workspace totals are unavailable.</p>}
         <div className="grid gap-4 lg:grid-cols-3">
           <Card className="p-5"><h2 className="font-semibold">Response completion</h2><p className="mt-4 text-3xl font-semibold">{data ? data.completion_rate + '%' : '—'}</p><p className="mt-2 text-sm text-muted-foreground">Reviews with an approved or published response.</p></Card>

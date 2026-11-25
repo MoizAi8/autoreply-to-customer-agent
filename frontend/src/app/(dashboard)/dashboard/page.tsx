@@ -1,8 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, CheckCircle2, Clock3, Inbox, Star } from 'lucide-react'
+import { ArrowRight, CheckCircle2, CircleAlert, Clock3, Inbox, Percent, Sparkles, Star } from 'lucide-react'
 import { ActivityChart } from '@/components/analytics/activity-chart'
 import { SentimentChart } from '@/components/analytics/sentiment-chart'
 import { PageTransition } from '@/components/layout/page-transition'
@@ -11,9 +12,11 @@ import * as api from '@/lib/api'
 import { formatRelativeTime } from '@/lib/utils'
 
 export default function DashboardPage() {
+  const [days, setDays] = useState(30)
   const stats = useQuery({ queryKey: ['dashboard-stats'], queryFn: api.getDashboardStats })
   const activity = useQuery({ queryKey: ['monthly-activity'], queryFn: () => api.getMonthlyActivity(6) })
-  const sentiment = useQuery({ queryKey: ['sentiment-trends'], queryFn: () => api.getSentimentTrends(30) })
+  const sentiment = useQuery({ queryKey: ['sentiment-trends', days], queryFn: () => api.getSentimentTrends(days) })
+  const workflow = useQuery({ queryKey: ['workflow'], queryFn: api.getWorkflowStatus })
   const recent = useQuery({ queryKey: ['recent-reviews'], queryFn: () => api.getReviews({ page: 1, page_size: 5 }) })
   const data = stats.data
   const tiles = [
@@ -21,6 +24,9 @@ export default function DashboardPage() {
     { name: 'Pending responses', value: data?.pending_replies, icon: Clock3 },
     { name: 'Approved drafts', value: data?.approved_replies, icon: CheckCircle2 },
     { name: 'Average rating', value: data?.total_reviews ? data.avg_rating.toFixed(2) : undefined, icon: Star },
+    { name: 'Generated drafts', value: workflow.data?.generated, icon: Sparkles },
+    { name: 'Failed attempts', value: workflow.data?.failed, icon: CircleAlert },
+    { name: 'Response completion', value: data ? data.completion_rate + '%' : undefined, icon: Percent },
   ]
 
   return (
@@ -31,6 +37,7 @@ export default function DashboardPage() {
           <Link href="/reviews" className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground">Open inbox <ArrowRight className="size-4" /></Link>
         </header>
         {stats.isError && <p role="alert" className="text-sm text-destructive">Dashboard totals are unavailable. <button className="underline" onClick={() => stats.refetch()}>Retry</button></p>}
+        {workflow.isError && <p role="alert" className="text-sm text-destructive">Draft activity is unavailable. <button className="underline" onClick={() => workflow.refetch()}>Retry</button></p>}
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           {tiles.map(({ name, value, icon: Icon }) => (
             <Card key={name} className="min-w-0 p-4 sm:p-5">
@@ -39,6 +46,10 @@ export default function DashboardPage() {
               <p className="mt-1 text-sm text-muted-foreground">{name}</p>
             </Card>
           ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <dl className="flex flex-wrap gap-4">{['positive', 'neutral', 'negative'].map((label) => <div key={label} className="flex gap-2"><dt className="capitalize text-muted-foreground">{label}</dt><dd>{data ? (data.sentiments[label] ?? 0) + (label === 'negative' ? data.sentiments.very_negative ?? 0 : 0) : '—'}</dd></div>)}</dl>
+          <label className="flex items-center gap-2">Sentiment window<select value={days} onChange={(event) => setDays(Number(event.target.value))} className="rounded border bg-card px-2 py-1"><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select></label>
         </div>
         <div className="grid min-w-0 gap-4 xl:grid-cols-2">
           {activity.isError ? <Card className="p-5">Review activity is unavailable.</Card> : <ActivityChart data={activity.data ?? []} loading={activity.isLoading} />}

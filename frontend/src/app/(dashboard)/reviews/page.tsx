@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { PageTransition } from '@/components/layout/page-transition'
 import * as api from '@/lib/api'
+import { downloadCsv } from '@/lib/csv'
 
 const field = 'w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring'
 const initialFilters = { search: '', platform: '', rating: '', sentiment: '', response_status: '', date_from: '', date_to: '', sort: 'created_at:desc' }
@@ -23,6 +24,7 @@ export default function ReviewsPage() {
   const [file, setFile] = useState<File | null>(null)
   const [previewCsv, setPreviewCsv] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [selected, setSelected] = useState<string[]>([])
   const [sort_by, sort_order] = filters.sort.split(':')
   const query = useQuery({
     queryKey: ['reviews', page, filters],
@@ -34,15 +36,18 @@ export default function ReviewsPage() {
   })
 
   const changeFilter = (key: keyof typeof initialFilters, value: string) => {
+    setSelected([])
     setFilters((current) => ({ ...current, [key]: value }))
     setPage(1)
   }
   const refresh = () => {
+    setSelected([])
     setPage(1)
     for (const key of ['reviews', 'dashboard-stats', 'recent-reviews', 'monthly-activity', 'platform-performance', 'draft-jobs', 'workflow', 'sentiment-trends']) {
       void client.invalidateQueries({ queryKey: [key] })
     }
   }
+  const selectedReviews = query.data?.items.filter((review) => selected.includes(review.id)) ?? []
   const manual = useMutation({
     mutationFn: api.createReview,
     onSuccess: () => { refresh(); setDialog(null) },
@@ -116,23 +121,35 @@ export default function ReviewsPage() {
           <label className="min-w-0 text-xs font-medium">Through<input type="date" className={'mt-1 ' + field} min={filters.date_from} value={filters.date_to} onChange={(event) => changeFilter('date_to', event.target.value)} /></label>
           <label className="text-xs font-medium">Sort by<select className={'mt-1 ' + field} value={filters.sort} onChange={(event) => changeFilter('sort', event.target.value)}><option value="created_at:desc">Most recently added</option><option value="created_at:asc">Oldest added</option><option value="rating:asc">Lowest rating</option><option value="rating:desc">Highest rating</option></select></label>
         </Card>
-        {filters !== initialFilters && <Button variant="ghost" onClick={() => { setFilters(initialFilters); setSearchInput(''); setPage(1) }}>Clear filters</Button>}
+        <div className="flex flex-wrap gap-2">
+          {filters !== initialFilters && <Button variant="ghost" onClick={() => { setFilters(initialFilters); setSearchInput(''); setSelected([]); setPage(1) }}>Clear filters</Button>}
+          {selectedReviews.length > 0 && <Button variant="outline" onClick={() => downloadCsv('autoreply-selected-reviews.csv', [
+            ['rating', 'content', 'customer_name', 'title', 'platform', 'review_date'],
+            ...selectedReviews.map((review) => [review.rating, review.review_text, review.customer_name, review.title, review.platform, review.review_date]),
+          ])}>Export selected reviews ({selectedReviews.length})</Button>}
+        </div>
         <Card className="divide-y overflow-hidden">
           {query.isLoading && <p className="p-6 text-sm text-muted-foreground">Loading reviews…</p>}
           {query.isError && <p role="alert" className="p-6 text-sm text-destructive">{api.errorMessage(query.error, 'Could not load reviews.')} <button className="underline" onClick={() => query.refetch()}>Retry</button></p>}
           {query.data?.items.length === 0 && <p className="p-6 text-sm text-muted-foreground">No matching reviews. Add feedback or change your filters.</p>}
           {query.data?.items.map((review) => (
-            <Link key={review.id} href={'/reviews/detail?id=' + review.id} className="grid min-w-0 grid-cols-[1fr_auto] items-center gap-4 p-4 hover:bg-muted/50 sm:p-5">
+            <div key={review.id} className="grid grid-cols-[auto_minmax(0,1fr)] items-center pl-4 hover:bg-muted/50 sm:pl-5">
+              <input type="checkbox" aria-label={'Select ' + review.customer_name} checked={selected.includes(review.id)} onChange={(event) => {
+                const checked = event.target.checked
+                setSelected((ids) => checked ? [...ids, review.id] : ids.filter((id) => id !== review.id))
+              }} className="size-4 accent-primary" />
+              <Link href={'/reviews/detail?id=' + review.id} className="grid min-w-0 grid-cols-[1fr_auto] items-center gap-4 p-4 sm:p-5">
               <div className="min-w-0">
                 <p className="truncate font-medium">{review.customer_name}{review.title ? ' · ' + review.title : ''}</p>
                 <p className="mt-1 truncate text-sm text-muted-foreground">{review.review_text}</p>
                 <p className="mt-2 text-xs capitalize text-muted-foreground">{review.platform} · {review.reply?.status.replaceAll('_', ' ') ?? 'Unanswered'}</p>
               </div>
               <div className="flex items-center gap-2 text-sm"><Star className="size-4 text-amber-500" />{review.rating}<ArrowUpRight className="ml-1 size-4 text-muted-foreground" /></div>
-            </Link>
+              </Link>
+            </div>
           ))}
         </Card>
-        {query.data && query.data.total_pages > 1 && <nav className="flex items-center justify-between gap-3" aria-label="Review pages"><Button variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button><p className="text-sm">Page {page} of {query.data.total_pages}</p><Button variant="outline" disabled={page >= query.data.total_pages} onClick={() => setPage(page + 1)}>Next</Button></nav>}
+        {query.data && query.data.total_pages > 1 && <nav className="flex items-center justify-between gap-3" aria-label="Review pages"><Button variant="outline" disabled={page <= 1} onClick={() => { setSelected([]); setPage(page - 1) }}>Previous</Button><p className="text-sm">Page {page} of {query.data.total_pages}</p><Button variant="outline" disabled={page >= query.data.total_pages} onClick={() => { setSelected([]); setPage(page + 1) }}>Next</Button></nav>}
       </div>
       <Dialog open={dialog !== null} onOpenChange={(open) => { if (!open && !manual.isPending && !csv.isPending && !preview.isPending) openDialog(null) }}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto">

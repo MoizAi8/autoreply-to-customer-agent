@@ -171,7 +171,7 @@ export async function getReviewHistory(reviewId: string): Promise<{ id: string; 
   return data
 }
 
-export async function getWorkflowStatus(): Promise<{ ai_enabled: boolean; provider: string; model: string; awaiting_approval: number; generated: number; remaining_today: number; daily_limit: number }> {
+export async function getWorkflowStatus(): Promise<{ ai_enabled: boolean; provider: string; model: string; awaiting_approval: number; generated: number; failed: number; remaining_today: number; daily_limit: number }> {
   const { data } = await api.get('/reviews/workflow')
   return data
 }

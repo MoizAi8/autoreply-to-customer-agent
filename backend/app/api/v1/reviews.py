@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.dependencies import get_current_business, get_current_user, get_db, limiter
 from app.models.audit_log import AuditLog
 from app.models.business import Business
+from app.models.drafting import DraftJob
 from app.models.reply import Reply
 from app.models.usage import UsageMetric
 from app.models.user import User
@@ -150,8 +151,11 @@ async def workflow_status(
     generated = await db.scalar(select(func.count()).where(
         UsageMetric.business_id == business.id, UsageMetric.metric_type == "ai_generation",
     ))
+    failed = await db.scalar(select(func.count()).where(
+        DraftJob.business_id == business.id, DraftJob.state == "failed",
+    ))
     return {"ai_enabled": settings.ai_ready, "provider": settings.AI_PROVIDER, "model": settings.ai_model,
-            "awaiting_approval": awaiting, "generated": generated,
+            "awaiting_approval": awaiting, "generated": generated, "failed": failed,
             "remaining_today": await DraftingService(db).remaining(user.id), "daily_limit": settings.AI_USER_DAILY_LIMIT}
 
 
