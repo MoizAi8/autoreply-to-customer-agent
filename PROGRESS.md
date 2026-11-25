@@ -2,8 +2,8 @@
 
 | Milestone | Evidence |
 | --- | --- |
-| Recovery and audit | Saved a verified Git bundle and created `codex/release-upgrade` from the original baseline. Confirmed repository identity, attribution and MIT license. |
-| Core workflow | Implemented tenant-scoped manual and CSV intake, review filters, manual drafts, AI draft validation, approval, rejection and activity history. |
-| Product reconstruction | Rebuilt the landing page, sample workspace, dashboard, inbox, response studio, analytics and business profile. |
-| Release QA | Added isolated API and browser regression suites. See [Test evidence](docs/TEST_RESULTS.md). |
-| Public demo | Deployed and verified the fictional-data sample workspace on Vercel Hobby. See [Deployment](docs/DEPLOYMENT.md) for the hosted scope and remaining release gates. |
+| Recovery and attribution | Saved a verified Git bundle and preserved the original MIT license and upstream attribution. |
+| Core workspace | Shipped tenant-scoped manual and CSV intake, search, response editing and history, approvals, reports, business profile, and quota controls. |
+| Genuine AI | Integrated Google Gemini 3.5 Flash-Lite for structured sentiment analysis and contextual, multilingual replies. Verified the replacement key locally after rotation. |
+| Source publication | Published to the personal [MoizAi8 repository](https://github.com/MoizAi8/autoreply-to-customer-agent). |
+| Production deployment | Vercel reports Ready for both the authenticated workspace and the FastAPI backend. Chromium verified live inference in English, German, and Urdu, persistence, automation, and quota enforcement. See [Hosted release](docs/HOSTED_RELEASE.md). |

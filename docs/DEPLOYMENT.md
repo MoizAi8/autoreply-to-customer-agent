@@ -6,12 +6,14 @@ See the root README for environment setup. Compose serves the Next.js static bui
 
 ## Vercel and Neon
 
+The production aliases are [the workspace](https://autoreply-ai-workspace.vercel.app/) and [the API](https://autoreply-ai-api.vercel.app/). Both run in Vercel Hobby with Neon Free PostgreSQL. The frontend uses the hosted API over HTTPS.
+
 - Backend project `autoreply-ai-api` uses FastAPI and the configuration in `backend/vercel.json`. Run `alembic upgrade head` against the intended Neon PostgreSQL database before deploying.
 - Store `SECRET_KEY`, `REGISTRATION_INVITE`, `DATABASE_URL` and `GEMINI_API_KEY` on the backend. Configure credentials as Sensitive in Production where Vercel allows it. Set the exact frontend origin in `CORS_ORIGINS` and `APP_URL`.
 - Set `AI_GENERATION_ENABLED=true`, `AI_PROVIDER=gemini` and `ALLOW_SIGNUPS=false`. The model defaults to `gemini-3.5-flash-lite`. Defaults allow five attempts per user and 30 across the service per UTC day, with two active jobs. Check the provider’s quota before changing these controls.
 - Build the workspace with the deployed API URL including `/api/v1`, `NEXT_PUBLIC_INVITE_SIGNUPS=true` and `NEXT_PUBLIC_ALLOW_SIGNUPS=false`. These public flags are applied at build time.
 - From `frontend/`, run `node scripts/package-vercel.mjs out <linked-staging-directory>` to prepare the static output. Deploy the linked frontend staging directory with `vercel deploy --prebuilt --prod`.
-- The hosted drafting path processes requests with a database-backed job ledger. The legacy Celery/Redis workers require a separate runtime and credentials.
+- The hosted API handles drafting in the request and records processing state in PostgreSQL. Redis and the legacy Celery workers are optional and require a separate runtime. The production deployment has no Redis broker or persistent worker.
 
 Use a fictional review to verify intake, model inference, approval, and persistence after reload. Confirm unauthorized requests are rejected and the workspace origin can reach the API.
 

@@ -2,6 +2,8 @@
 
 AutoReply AI is an authenticated review operations workspace. Collect feedback, generate a response in your business’s voice with Google Gemini, and review the reply before sharing it with a customer.
 
+[Open AutoReply AI](https://autoreply-ai-workspace.vercel.app/) · [API health](https://autoreply-ai-api.vercel.app/health). Workspace access requires an invitation.
+
 ![AutoReply AI landing page](docs/screenshots/landing.png)
 
 - Import individual reviews or preview a CSV before importing. Search reviews and saved responses across your workspace.
