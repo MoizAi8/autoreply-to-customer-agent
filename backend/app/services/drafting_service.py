@@ -115,7 +115,8 @@ class DraftingService:
         try:
             async with asyncio.timeout(PROCESSING_TIMEOUT):
                 reply = await ReplyService(self.db).generate_reply(
-                    business_id, review_id, options.instructions(), reuse_existing=not replace,
+                    business_id, review_id, options.instructions(),
+                    reuse_existing=not replace, requested_language=options.language,
                 )
             await self._finish(job_id, "completed")
             return reply

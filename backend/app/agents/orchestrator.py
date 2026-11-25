@@ -16,6 +16,7 @@ from app.models.review import Review
 from app.models.business import Business
 from app.models.brand_voice import BrandVoice
 from app.models.usage import UsageMetric
+from app.schemas.drafting import DraftLanguage
 from app.agents.provider import analyze_review, create_provider_client
 from app.agents.input_validation_agent import InputValidationAgent
 from app.agents.language_detection_agent import LanguageDetectionAgent
@@ -38,10 +39,10 @@ AGENT_TIMEOUT_SECONDS = 18
 MAX_RETRIES = 0
 
 
-async def _with_provider_retry(operation, *args):
+async def _with_provider_retry(operation, *args, **kwargs):
     for attempt in range(2):
         try:
-            return await operation(*args)
+            return await operation(*args, **kwargs)
         except RateLimitError:
             raise
         except (APIConnectionError, APIStatusError) as exc:
@@ -191,6 +192,7 @@ class AIOrchestrator:
         review_id: UUID,
         custom_instructions: Optional[str] = None,
         reuse_existing: bool = False,
+        requested_language: DraftLanguage | None = None,
     ) -> OrchestrationResult:
         pipeline_log: list[dict[str, Any]] = []
         start_time = time.monotonic()
@@ -299,6 +301,7 @@ class AIOrchestrator:
         step = await self._run_agent_step(
             "reply_generation", _with_provider_retry, self.reply_generator.generate,
             business, review, brand, brand_context, custom_instructions, risk_level,
+            requested_language=requested_language,
         )
         pipeline_log.append(step)
         gen_result = step["result"]

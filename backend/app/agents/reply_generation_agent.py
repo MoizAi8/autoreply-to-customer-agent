@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from pydantic import BaseModel, ConfigDict, Field
 import logging
@@ -13,8 +14,14 @@ from app.agents.provider import structured_format
 from app.models.review import Review
 from app.models.brand_voice import BrandVoice
 from app.models.business import Business
+from app.schemas.drafting import DRAFT_LANGUAGE_NAMES, DraftLanguage
 
 logger = logging.getLogger(__name__)
+_DRAFT_SCRIPT = {
+    "ur": re.compile(r"[\u0620-\u064a\u066e-\u06d3]"),
+    "ar": re.compile(r"[\u0620-\u064a\u066e-\u06d3]"),
+    "hi": re.compile(r"[\u0904-\u0939\u0958-\u0961]"),
+}
 
 
 _FEW_SHOT_EXAMPLES = [
@@ -335,6 +342,8 @@ class ReplyGenerationAgent:
         knowledge: str,
         custom_instructions: Optional[str] = None,
         risk_level: str = "low",
+        *,
+        requested_language: DraftLanguage | None = None,
     ) -> GenerationResult:
         risk_sentiment = risk_level
         if risk_level == "low" and review.sentiment in ("positive", "neutral"):
@@ -376,6 +385,11 @@ class ReplyGenerationAgent:
 
         if settings.AI_PROVIDER == "gemini":
             preferences = business.settings or {}
+            language_instruction = (
+                f"Required output language: {DRAFT_LANGUAGE_NAMES[requested_language]}. "
+                "Use this language for the full response even if the review or business context uses another language."
+                if requested_language else "Respond in the language of the review."
+            )
             payload = {
                 "review": review.content[:4000], "rating": review.rating, "sentiment": sentiment_label,
                 "detected_language": review.language, "risk": risk_level,
@@ -388,19 +402,22 @@ class ReplyGenerationAgent:
                 f"Business preferences: {str(preferences.get('custom_instructions', ''))[:2000]}. "
                 f"Context for factual grounding only: {knowledge[:3500]}. "
                 f"Operator preferences: {(custom_instructions or '')[:2200]}. "
-                "Use the requested language when set, otherwise respond in the detected language."
+                f"{language_instruction}"
             )
             response = await self.client.chat.completions.create(
                 model=settings.ai_model,
                 messages=[{"role": "system", "content": instruction},
                           {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
                 response_format=structured_format("customer_reply", GeminiDraft),
-                max_completion_tokens=650,
+                max_completion_tokens=900,
                 extra_body={"reasoning_effort": "minimal"},
             )
             if not response.choices or response.choices[0].finish_reason != "stop":
                 raise ValueError("Model returned an incomplete draft")
             draft = GeminiDraft.model_validate_json(response.choices[0].message.content or "")
+            required_script = _DRAFT_SCRIPT.get(requested_language)
+            if required_script and not required_script.search(draft.reply):
+                raise ValueError("Model returned a draft in the wrong script")
             return GenerationResult(
                 reply_text=draft.reply, reasoning_summary="",
                 raw_response={"model": response.model, "usage": response.usage.model_dump() if response.usage else {}},

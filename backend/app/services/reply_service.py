@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.reply import Reply
 from app.models.review import Review
+from app.schemas.drafting import DraftLanguage
 from app.services.audit_service import AuditService
 
 def translate_generation_error(exc: ValueError) -> HTTPException:
@@ -25,14 +26,15 @@ class ReplyService:
 
     async def generate_reply(
         self, business_id: UUID, review_id: UUID, custom_instructions: Optional[str] = None,
-        *, reuse_existing: bool = True,
+        *, reuse_existing: bool = True, requested_language: DraftLanguage | None = None,
     ) -> Reply:
         from app.agents.orchestrator import AIOrchestrator
 
         orchestrator = AIOrchestrator(self.db)
         try:
             result = await orchestrator.process_review(
-                business_id, review_id, custom_instructions=custom_instructions, reuse_existing=reuse_existing
+                business_id, review_id, custom_instructions=custom_instructions,
+                reuse_existing=reuse_existing, requested_language=requested_language,
             )
         finally:
             await orchestrator.openai_client.close()

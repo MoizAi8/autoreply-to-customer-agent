@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -5,8 +8,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.agents.provider import ReviewAnalysis
+from app.agents.reply_generation_agent import ReplyGenerationAgent
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.models.brand_voice import BrandVoice
+from app.models.business import Business
+from app.models.review import Review
 from app.services.drafting_service import DraftingService
 from conftest import authorization
 
@@ -26,6 +33,24 @@ def test_gemini_rejects_malformed_classification(fields):
     defaults = {"sentiment": "positive", "language": "de", "intent": "praise", "confidence": 0.87}
     with pytest.raises(ValidationError):
         ReviewAnalysis.model_validate({**defaults, **fields})
+
+
+@pytest.mark.asyncio
+async def test_explicit_urdu_draft_rejects_english_output(monkeypatch):
+    monkeypatch.setattr(settings, "AI_PROVIDER", "gemini")
+    result = SimpleNamespace(choices=[SimpleNamespace(
+        finish_reason="stop", message=SimpleNamespace(content=json.dumps({"reply": "Thank you for your feedback."})),
+    )])
+    create = AsyncMock(return_value=result)
+    agent = ReplyGenerationAgent(SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    with pytest.raises(ValueError, match="wrong script"):
+        await agent.generate(
+            Business(name="Test retailer", settings={}),
+            Review(content="The parcel arrived Tuesday.", rating=3, language="en"),
+            BrandVoice(tone="friendly", style="concise"), "Preferred language: English",
+            requested_language="ur",
+        )
+    assert "Required output language: Urdu in the Urdu script" in create.await_args.kwargs["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

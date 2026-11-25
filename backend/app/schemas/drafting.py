@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field, model_validator
 
 JobState = Literal["processing", "completed", "failed"]
 DraftLanguage = Literal["en", "ur", "hi", "ar", "de"]
+DRAFT_LANGUAGE_NAMES: dict[DraftLanguage, str] = {
+    "en": "English",
+    "ur": "Urdu in the Urdu script",
+    "hi": "Hindi in the Devanagari script",
+    "ar": "Arabic in the Arabic script",
+    "de": "German",
+}
 
 
 class AutomationRule(BaseModel):

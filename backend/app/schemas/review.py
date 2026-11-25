@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.reply import ReplyResponse, UtcDatetime
-from app.schemas.drafting import DraftLanguage
+from app.schemas.drafting import DRAFT_LANGUAGE_NAMES, DraftLanguage
 from app.utils.helpers import as_utc
 
 
@@ -78,7 +78,7 @@ class GenerateReplyRequest(BaseModel):
         return "\n".join(filter(None, (
             f"Response tone: {self.tone}." if self.tone else "",
             f"Response length: {self.length}." if self.length else "",
-            f"Write the entire customer-facing response in language {self.language}." if self.language else "",
+            f"Write the entire customer-facing response in {DRAFT_LANGUAGE_NAMES[self.language]}." if self.language else "",
             self.custom_instructions,
         )))
 
