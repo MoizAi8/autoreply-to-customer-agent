@@ -31,15 +31,17 @@ class BrandVoiceResponse(BaseModel):
 
 class BrandVoiceUpdate(BaseModel):
     company_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    industry: Optional[str] = None
-    business_description: Optional[str] = None
-    writing_style: Optional[str] = None
-    tone: Optional[str] = None
-    language: Optional[str] = None
-    reply_length: Optional[str] = None
-    greeting_style: Optional[str] = None
-    closing_style: Optional[str] = None
+    industry: Optional[str] = Field(None, max_length=255)
+    business_description: Optional[str] = Field(None, max_length=3000)
+    writing_style: Optional[str] = Field(None, max_length=50)
+    tone: Optional[str] = Field(None, max_length=50)
+    language: Optional[str] = Field(None, max_length=10)
+    reply_length: Optional[str] = Field(None, pattern="^(short|medium|long)$")
+    greeting_style: Optional[str] = Field(None, max_length=500)
+    closing_style: Optional[str] = Field(None, max_length=500)
     emoji_preference: Optional[bool] = None
     professional_level: Optional[int] = Field(None, ge=1, le=5)
     personalization_level: Optional[int] = Field(None, ge=1, le=5)
-    custom_instructions: Optional[str] = None
+    custom_instructions: Optional[str] = Field(None, max_length=2000)
+    support_contact: Optional[str] = Field(None, max_length=500)
+    escalation_rules: Optional[str] = Field(None, max_length=2000)

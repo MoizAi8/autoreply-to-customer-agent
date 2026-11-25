@@ -1,21 +1,24 @@
 from __future__ import annotations
 
-import logging
+import csv
+import hashlib
+import io
+import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, or_, select
+from pydantic import ValidationError
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.review import Review
 from app.models.reply import Reply
-from app.schemas.review import ReviewFilterParams
+from app.schemas.review import ManualReviewRequest, ReviewFilterParams
+from app.services.audit_service import AuditService
 from app.utils.helpers import now
-
-logger = logging.getLogger(__name__)
-
 
 class ReviewService:
     def __init__(self, db: AsyncSession) -> None:
@@ -31,7 +34,7 @@ class ReviewService:
                     Review.platform_review_id == platform_review_id,
                 )
             )
-            if existing.scalar_one_or_none():
+            if existing.scalars().first():
                 raise ValueError("Duplicate review: already ingested")
 
         review = Review(
@@ -49,19 +52,67 @@ class ReviewService:
             review_date=review_data.get("review_date") or now(),
             is_processed=False,
         )
-        self.db.add(review)
-        await self.db.flush()
-        await self.db.refresh(review)
-
         try:
-            from app.agents.orchestrator import AIOrchestrator
-
-            orchestrator = AIOrchestrator(self.db)
-            await orchestrator.process_review(business_id, review.id)
-        except Exception as exc:
-            logger.warning("AI orchestration deferred for review %s: %s", review.id, exc)
-
+            async with self.db.begin_nested():
+                self.db.add(review)
+                await self.db.flush()
+        except IntegrityError:
+            if platform_review_id:
+                duplicate = await self.db.scalar(select(Review.id).where(
+                    Review.business_id == business_id,
+                    Review.platform == platform,
+                    Review.platform_review_id == platform_review_id,
+                ))
+                if duplicate:
+                    raise ValueError("Duplicate review: already ingested") from None
+            raise
         return review
+
+    async def create_manual_review(self, business_id: UUID, entry: ManualReviewRequest) -> Review:
+        data = entry.model_dump()
+        normalized = json.dumps(entry.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+        data["platform_review_id"] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        return await self.ingest_review(business_id, "manual", data)
+
+    async def import_csv(self, business_id: UUID, content: str, user_id: UUID) -> dict[str, Any]:
+        entries = []
+        errors = []
+        reader = csv.DictReader(io.StringIO(content.lstrip("\ufeff"), newline=""), strict=True)
+        try:
+            headers = reader.fieldnames or []
+            required = {"rating", "content"}
+            optional = {"customer_name", "title", "review_date"}
+            if len(headers) != len(set(headers)) or not required <= set(headers) <= required | optional:
+                raise ValueError("CSV requires rating and content. Optional columns are customer_name, title and review_date.")
+            for index, row in enumerate(reader, start=1):
+                if index > 200:
+                    raise ValueError("CSV imports are limited to 200 reviews.")
+                row_number = reader.line_num
+                if None in row or any(value is None for value in row.values()):
+                    errors.append({"row": row_number, "message": "Column count does not match the header."})
+                    continue
+                try:
+                    entries.append(ManualReviewRequest.model_validate({
+                        key: value for key, value in row.items() if value or key in required
+                    }))
+                except ValidationError as exc:
+                    fields = ", ".join(str(item["loc"][0]) for item in exc.errors())
+                    errors.append({"row": row_number, "message": f"Invalid fields: {fields}."})
+        except csv.Error as exc:
+            raise ValueError(f"Malformed CSV near line {reader.line_num}.") from exc
+        if not entries and not errors:
+            raise ValueError("The CSV contains no reviews.")
+        imported = duplicates = 0
+        audit = AuditService(self.db)
+        for entry in entries:
+            try:
+                review = await self.create_manual_review(business_id, entry)
+            except ValueError:
+                duplicates += 1
+                continue
+            await audit.log(business_id, user_id, "review_added", "review", str(review.id), details={"source": "csv"})
+            imported += 1
+        return {"imported": imported, "duplicates": duplicates, "errors": errors}
 
     async def get_reviews(
         self, business_id: UUID, filters: ReviewFilterParams
@@ -84,13 +135,17 @@ class ReviewService:
             query = query.where(Review.review_date >= filters.date_from)
         if filters.date_to:
             query = query.where(Review.review_date <= filters.date_to)
+        if filters.response_status == "unanswered":
+            query = query.where(~Review.reply.has(Reply.business_id == business_id))
+        elif filters.response_status:
+            statuses = ["pending", "pending_approval"] if filters.response_status == "pending" else [filters.response_status]
+            query = query.where(Review.reply.has((Reply.business_id == business_id) & Reply.status.in_(statuses)))
         if filters.search:
-            search_pattern = f"%{filters.search}%"
             query = query.where(
                 or_(
-                    Review.content.ilike(search_pattern),
-                    Review.customer_name.ilike(search_pattern),
-                    Review.title.ilike(search_pattern),
+                    Review.content.icontains(filters.search, autoescape=True),
+                    Review.customer_name.icontains(filters.search, autoescape=True),
+                    Review.title.icontains(filters.search, autoescape=True),
                 )
             )
 
@@ -99,7 +154,9 @@ class ReviewService:
         total = total_result.scalar() or 0
 
         offset = (filters.page - 1) * filters.page_size
-        query = query.order_by(Review.created_at.desc()).offset(offset).limit(filters.page_size)
+        column = getattr(Review, filters.sort_by)
+        order = column.asc() if filters.sort_order == "asc" else column.desc()
+        query = query.order_by(order, Review.id.desc()).offset(offset).limit(filters.page_size)
         result = await self.db.execute(query)
         reviews = result.scalars().all()
 

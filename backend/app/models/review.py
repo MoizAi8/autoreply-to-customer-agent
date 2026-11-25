@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -14,6 +14,13 @@ from app.utils.helpers import now
 
 class Review(Base):
     __tablename__ = "reviews"
+    __table_args__ = (
+        Index(
+            "uq_reviews_business_platform_external_id", "business_id", "platform", "platform_review_id",
+            unique=True, postgresql_where=text("platform_review_id <> ''"),
+            sqlite_where=text("platform_review_id <> ''"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         Uuid(), primary_key=True, default=uuid.uuid4
@@ -56,6 +63,10 @@ class Review(Base):
     @property
     def review_text(self) -> str:
         return self.content
+
+    @property
+    def sentiment_confidence(self) -> Optional[float]:
+        return self.sentiment_score
 
     @property
     def reply_text(self) -> Optional[str]:

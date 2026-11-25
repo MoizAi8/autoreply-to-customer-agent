@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from openai import AsyncOpenAI
+from openai import APIError, AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,16 +15,6 @@ from app.models.knowledge_base import KnowledgeBaseEntry
 from app.utils.helpers import now
 
 logger = logging.getLogger(__name__)
-
-_openai_client: Optional[AsyncOpenAI] = None
-
-
-def _get_openai() -> AsyncOpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    return _openai_client
-
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
@@ -39,12 +30,15 @@ class KnowledgeService:
         self.db = db
 
     async def _generate_embedding(self, text: str) -> list[float]:
-        client = _get_openai()
-        response = await client.embeddings.create(
-            model=settings.EMBEDDING_MODEL,
-            input=text,
-        )
-        return response.data[0].embedding
+        if not settings.AI_GENERATION_ENABLED or not settings.OPENAI_API_KEY:
+            return []
+        try:
+            async with AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.AI_REQUEST_TIMEOUT_SECONDS, max_retries=0) as client:
+                response = await client.embeddings.create(model=settings.EMBEDDING_MODEL, input=text)
+                return response.data[0].embedding
+        except APIError as exc:
+            logger.warning("Knowledge embeddings unavailable (%s)", type(exc).__name__)
+            return []
 
     async def add_entry(
         self,
@@ -71,24 +65,26 @@ class KnowledgeService:
         return entry
 
     async def search(
-        self, business_id: UUID, query: str, limit: int = 5
+        self, business_id: UUID, query: str, limit: int = 5, *, semantic: bool = True
     ) -> list[dict[str, Any]]:
-        query_embedding = await self._generate_embedding(query)
-
         result = await self.db.execute(
             select(KnowledgeBaseEntry).where(
                 KnowledgeBaseEntry.business_id == business_id,
-                KnowledgeBaseEntry.is_active == True,
-            )
+                KnowledgeBaseEntry.is_active.is_(True),
+            ).order_by(KnowledgeBaseEntry.created_at.desc()).limit(200)
         )
         entries = result.scalars().all()
-
+        query_embedding = await self._generate_embedding(query) if semantic and any(entry.embedding for entry in entries) else []
+        terms = set(re.findall(r"[^\W\d_]{4,}", query.casefold()))
         scored = []
         for entry in entries:
-            if not entry.embedding:
-                continue
-            sim = _cosine_similarity(query_embedding, entry.embedding)
-            scored.append((sim, entry))
+            if query_embedding and entry.embedding and len(entry.embedding) == len(query_embedding):
+                score = _cosine_similarity(query_embedding, entry.embedding)
+            else:
+                words = set(re.findall(r"[^\W\d_]{4,}", f"{entry.category} {entry.title} {entry.content}".casefold()))
+                score = len(terms & words) / max(min(len(terms), 5), 1)
+            if score > 0:
+                scored.append((min(score, 1.0), entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         top = scored[:limit]
@@ -99,7 +95,7 @@ class KnowledgeService:
                 "category": entry.category,
                 "title": entry.title,
                 "content": entry.content,
-                "metadata": entry.metadata,
+                "metadata": entry.extra_metadata,
                 "similarity": round(score, 4),
             }
             for score, entry in top
@@ -132,14 +128,14 @@ class KnowledgeService:
         if not entry:
             return None
 
-        for field in ("category", "title", "content", "metadata"):
-            if field in data and data[field] is not None:
+        for field in ("category", "title", "content"):
+            if field in data:
                 setattr(entry, field, data[field])
+        if "metadata" in data:
+            entry.extra_metadata = data["metadata"]
 
         if "title" in data or "content" in data:
-            new_title = data.get("title", entry.title)
-            new_content = data.get("content", entry.content)
-            entry.embedding = await self._generate_embedding(f"{new_title}\n\n{new_content}")
+            entry.embedding = await self._generate_embedding(f"{entry.title}\n\n{entry.content}")
 
         await self.db.flush()
         await self.db.refresh(entry)

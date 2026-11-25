@@ -2,32 +2,45 @@
 
 import { create } from 'zustand'
 import type { User } from '@/types'
-import { setToken, setRefreshToken, removeToken, removeRefreshToken, isAuthenticated } from '@/lib/auth'
+import { setToken, setRefreshToken, removeToken, removeRefreshToken, getToken, getRefreshToken } from '@/lib/auth'
 import * as api from '@/lib/api'
 
 interface AuthState {
   user: User | null
   isAuthenticated: boolean
   isLoading: boolean
-  login: (_email: string, _password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<string | null>
+  completeMfa: (challenge: string, code: string) => Promise<void>
   logout: () => void
   checkAuth: () => Promise<void>
+}
+
+async function startSession(tokens: api.SessionTokens): Promise<User> {
+  setToken(tokens.access_token)
+  setRefreshToken(tokens.refresh_token)
+  try {
+    return await api.getMe()
+  } catch (error) {
+    removeToken()
+    removeRefreshToken()
+    throw error
+  }
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
   isLoading: true,
-  login: async (_email: string, _password: string) => {
-    const res = await api.login(_email, _password)
-    setToken(res.access_token)
-    setRefreshToken(res.refresh_token)
-    const user = await api.getMe()
-    set({
-      user,
-      isAuthenticated: true,
-      isLoading: false,
-    })
+  login: async (email, password) => {
+    const result = await api.login(email, password)
+    if ('challenge_token' in result) return result.challenge_token
+    const user = await startSession(result)
+    set({ user, isAuthenticated: true, isLoading: false })
+    return null
+  },
+  completeMfa: async (challenge, code) => {
+    const user = await startSession(await api.completeMfa(challenge, code))
+    set({ user, isAuthenticated: true, isLoading: false })
   },
   logout: () => {
     removeToken()
@@ -35,7 +48,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: null, isAuthenticated: false, isLoading: false })
   },
   checkAuth: async () => {
-    if (!isAuthenticated()) {
+    if (!getToken() && !getRefreshToken()) {
       set({ user: null, isAuthenticated: false, isLoading: false })
       return
     }

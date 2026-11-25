@@ -28,13 +28,13 @@ services:
     container_name: autoreply-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-autoreply}
       POSTGRES_USER: ${POSTGRES_USER:-autoreply}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autoreply_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the Compose environment}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autoreply} -d ${POSTGRES_DB:-autoreply}"]
       <<: *healthcheck-common
@@ -47,7 +47,7 @@ services:
     container_name: autoreply-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -61,10 +61,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    command: bash entrypoint.render.sh
     container_name: autoreply-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +73,11 @@ services:
         condition: service_healthy
     env_file:
       - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autoreply}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-autoreply}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
     volumes:
       - ./backend:/app
       - /app/__pycache__/
@@ -81,10 +87,7 @@ services:
           "CMD",
           "curl",
           "--fail",
-          "http://localhost:8000/api/v1/health",
-          "||",
-          "exit",
-          "1",
+          "http://localhost:8000/ready",
         ]
       <<: *healthcheck-common
     logging: *default-logging
@@ -100,11 +103,16 @@ services:
     command: celery -A app.workers.celery_app worker --loglevel=info
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     env_file:
       - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autoreply}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-autoreply}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
     volumes:
       - ./backend:/app
       - /app/__pycache__/
@@ -124,6 +132,11 @@ services:
         condition: service_healthy
     env_file:
       - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autoreply}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-autoreply}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
     volumes:
       - ./backend:/app
       - /app/__pycache__/
@@ -135,19 +148,20 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_ALLOW_SIGNUPS: ${NEXT_PUBLIC_ALLOW_SIGNUPS:-false}
     container_name: autoreply-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - backend
-    env_file:
-      - ./frontend/.env
     logging: *default-logging
     networks:
       - autoreply-network
 
   nginx:
+    profiles: ["edge"]
     image: nginx:alpine
     container_name: autoreply-nginx
     restart: unless-stopped

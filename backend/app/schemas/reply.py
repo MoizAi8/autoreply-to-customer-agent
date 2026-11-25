@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+from app.utils.helpers import as_utc
+
+UtcDatetime = Annotated[datetime, AfterValidator(as_utc)]
 
 
 class ReplyGenerateRequest(BaseModel):
@@ -25,7 +29,8 @@ class ReplyGenerateResponse(BaseModel):
 
 
 class ReplyUpdateRequest(BaseModel):
-    content: str = Field(..., min_length=1)
+    model_config = ConfigDict(str_strip_whitespace=True)
+    content: str = Field(..., min_length=1, max_length=4000)
 
 
 class ReplyRejectRequest(BaseModel):
@@ -41,6 +46,12 @@ class ReplyPublishRequest(BaseModel):
     schedule_at: Optional[datetime] = None
 
 
+class WorkflowStep(BaseModel):
+    step: str
+    status: str
+    duration_ms: int
+
+
 class ReplyResponse(BaseModel):
     id: UUID
     review_id: UUID
@@ -51,13 +62,14 @@ class ReplyResponse(BaseModel):
     quality_score: Optional[float] = None
     safety_score: Optional[float] = None
     confidence_score: Optional[float] = None
-    is_ai_generated: bool = True
+    is_ai_generated: bool = False
     ai_model_version: Optional[str] = None
     prompt_version: Optional[str] = None
     human_edited: bool = False
+    workflow_steps: list[WorkflowStep] = Field(default_factory=list)
     edited_by: Optional[UUID] = None
-    published_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    published_at: Optional[UtcDatetime] = None
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
     model_config = {"from_attributes": True}

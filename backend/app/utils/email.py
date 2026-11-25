@@ -1,38 +1,43 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import smtplib
+import ssl
+from email.message import EmailMessage
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-async def _send_smtp(to: str, subject: str, body: str) -> None:
+def _send_smtp(to: str, subject: str, body: str) -> None:
+    if not settings.SMTP_HOST or not settings.SMTP_FROM_EMAIL:
+        logger.info("Email delivery is disabled")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = settings.SMTP_FROM_EMAIL
+    msg["To"] = to
+    msg.set_content(body)
+
     try:
-        import smtplib
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"noreply@{settings.PROJECT_NAME.lower().replace(' ', '')}.com"
-        msg["To"] = to
-        msg.attach(MIMEText(body, "plain"))
-        msg.attach(MIMEText(body.replace("\n", "<br>\n"), "html"))
-
-        with smtplib.SMTP("localhost", 25, timeout=5) as s:
-            s.sendmail(msg["From"], [to], msg.as_string())
-    except Exception as exc:
-        logger.warning("SMTP unavailable, falling back to console: %s", exc)
-        logger.info("Email to=%s subject=%s body=%s", to, subject, body[:200])
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=5) as client:
+            client.starttls(context=ssl.create_default_context())
+            if settings.SMTP_USER:
+                client.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            client.send_message(msg)
+    except (OSError, smtplib.SMTPException):
+        logger.warning("Email delivery failed")
 
 
 async def send_email(to: str, subject: str, body: str) -> None:
-    await _send_smtp(to, subject, body)
+    await asyncio.to_thread(_send_smtp, to, subject, body)
 
 
 async def send_verification_email(email: str, token: str) -> None:
-    verify_url = f"http://localhost:3000/verify-email?token={token}"
+    verify_url = f"{settings.APP_URL.rstrip('/')}/verify-email?token={token}"
     subject = "Verify your email address"
     body = (
         f"Welcome to {settings.PROJECT_NAME}!\n\n"
@@ -45,7 +50,7 @@ async def send_verification_email(email: str, token: str) -> None:
 
 
 async def send_password_reset(email: str, token: str) -> None:
-    reset_url = f"http://localhost:3000/reset-password?token={token}"
+    reset_url = f"{settings.APP_URL.rstrip('/')}/reset-password?token={token}"
     subject = "Reset your password"
     body = (
         f"You requested a password reset for {settings.PROJECT_NAME}.\n\n"

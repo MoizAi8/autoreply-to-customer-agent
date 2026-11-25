@@ -50,28 +50,18 @@ class BrandVoiceService:
     async def update_brand_voice(self, business_id: UUID, data: dict[str, Any]) -> BrandVoice:
         brand_voice = await self.get_brand_voice(business_id)
 
-        field_map = {
-            "writing_style": "style",
-            "greeting_style": "greeting_template",
-            "closing_style": "closing_template",
-            "business_description": None,
-            "company_name": None,
-            "industry": None,
-            "reply_length": None,
-            "emoji_preference": None,
-            "professional_level": None,
-            "personalization_level": None,
-            "custom_instructions": None,
-        }
-
+        business = await self.db.get(Business, business_id, with_for_update=True)
+        business_fields = {"company_name": "name", "industry": "industry", "business_description": "description"}
+        brand_fields = {"writing_style": "style", "greeting_style": "greeting_template",
+                        "closing_style": "closing_template", "tone": "tone", "language": "language"}
+        settings_fields = {"reply_length", "emoji_preference", "professional_level", "personalization_level",
+                           "custom_instructions", "support_contact", "escalation_rules"}
         for key, value in data.items():
-            mapped = field_map.get(key)
-            if mapped and value is not None:
-                setattr(brand_voice, mapped, value)
-            elif mapped is None:
-                continue
-            elif key in ("tone", "style", "language", "personality", "values", "keywords", "forbidden_terms", "custom_rules", "greeting_template", "closing_template", "sample_replies") and value is not None:
-                setattr(brand_voice, key, value)
+            if key in business_fields:
+                setattr(business, business_fields[key], value)
+            elif key in brand_fields:
+                setattr(brand_voice, brand_fields[key], value)
+        business.settings = {**(business.settings or {}), **{key: data[key] for key in settings_fields & data.keys()}}
 
         brand_voice.is_default = False
         await self.db.flush()
@@ -88,7 +78,7 @@ class BrandVoiceService:
 
         parts = [
             f"Company: {business.name if business else 'Unknown'}",
-            f"Industry: {business.industry or 'General'}",
+            f"Industry: {(business.industry if business else None) or 'General'}",
             f"Tone: {brand_voice.tone}",
             f"Style: {brand_voice.style}",
             f"Language: {brand_voice.language}",

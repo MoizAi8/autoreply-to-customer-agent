@@ -21,8 +21,9 @@ build/
 
 # Environment
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+*.bundle
 *.log
 
 # OS
@@ -43,3 +44,8 @@ docker/ssl/
 # Next.js static export
 # Next.js static export
 out/
+test-results/
+playwright-report/
+.vercel/
+*.sqlite-wal
+*.sqlite-shm

@@ -1,6 +1,6 @@
 'use client'
 
-import { forwardRef, useState, InputHTMLAttributes } from 'react'
+import { forwardRef, useId, useState, InputHTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check } from 'lucide-react'
@@ -16,7 +16,9 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, label, error, leftIcon, rightIcon, showCharCount, maxLength, success, value, onChange, ...props }, ref) => {
+  ({ className, type, label, error, leftIcon, rightIcon, showCharCount, maxLength, success, value, onChange, onFocus, onBlur, id, ...props }, ref) => {
+    const generatedId = useId()
+    const inputId = id ?? generatedId
     const [focused, setFocused] = useState(false)
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -28,6 +30,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       <div className="w-full">
         {label && (
           <motion.label
+            htmlFor={inputId}
             initial={false}
             animate={{ y: focused || (value as string)?.length ? -4 : 0 }}
             className="mb-1.5 block text-sm font-medium text-neutral-700 dark:text-neutral-300"
@@ -46,7 +49,10 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             transition={{ duration: 0.3 }}
           >
             <input
+              {...props}
+              id={inputId}
               type={type}
+              maxLength={maxLength}
               className={cn(
                 'flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200',
                 error && 'border-red-500 focus-visible:ring-red-500',
@@ -58,11 +64,10 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
               ref={ref}
               value={value}
               onChange={handleChange}
-              onFocus={(e) => { setFocused(true); props.onFocus?.(e) }}
-              onBlur={(e) => { setFocused(false); props.onBlur?.(e) }}
+              onFocus={(e) => { setFocused(true); onFocus?.(e) }}
+              onBlur={(e) => { setFocused(false); onBlur?.(e) }}
               aria-invalid={!!error}
-              aria-describedby={error ? `${props.id || 'input'}-error` : undefined}
-              {...props}
+              aria-describedby={error ? `${inputId}-error` : props['aria-describedby']}
             />
           </motion.div>
           {rightIcon && (
@@ -97,7 +102,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
-                id={`${props.id || 'input'}-error`}
+                id={`${inputId}-error`}
                 className="mt-1 text-xs text-red-500"
                 role="alert"
               >

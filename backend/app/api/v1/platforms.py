@@ -50,20 +50,7 @@ async def connect_platform(
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        service = PlatformService(db)
-        connection = await service.connect_platform(
-            business_id=business.id, platform=body.platform, credentials=body.credentials
-        )
-        return SuccessResponse(
-            message=f"Connected to {body.platform}",
-            data={"id": str(connection.id), "platform": connection.platform},
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    except Exception as exc:
-        logger.exception("Failed to connect platform")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to connect platform")
+    raise HTTPException(status_code=503, detail="Live platform connections are unavailable. Import reviews manually or by CSV.")
 
 
 @router.post("/{platform_id}/disconnect")

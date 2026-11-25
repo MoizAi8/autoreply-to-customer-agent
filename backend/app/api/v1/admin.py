@@ -138,8 +138,8 @@ async def get_usage_metrics(
 
 
 @router.get("/health", response_model=HealthResponse)
-async def admin_health():
-    statuses = {"database": "disconnected", "redis": "disconnected", "openai": "unknown"}
+async def admin_health(current_user: User = Depends(require_role("superuser"))):
+    statuses = {"database": "disconnected", "redis": "disconnected"}
     try:
         async with AsyncSessionLocal() as db:
             await db.execute(select(func.now()))
@@ -155,16 +155,6 @@ async def admin_health():
             statuses["redis"] = "connected"
     except Exception as exc:
         logger.warning("Health check — redis: %s", exc)
-
-    try:
-        from openai import AsyncOpenAI
-        from app.core.config import settings
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        await client.models.list()
-        statuses["openai"] = "connected"
-    except Exception as exc:
-        logger.warning("Health check — openai: %s", exc)
-        statuses["openai"] = "disconnected"
 
     return HealthResponse(
         status="healthy" if statuses["database"] == "connected" else "unhealthy",

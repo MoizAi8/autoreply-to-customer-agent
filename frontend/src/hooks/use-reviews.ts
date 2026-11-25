@@ -4,19 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from '@/lib/api'
 import type { Review, Reply, PaginatedResponse } from '@/types'
 
-interface ReviewFilters {
-  page?: number
-  page_size?: number
-  sentiment?: string
-  platform?: string
-  rating?: number
-  risk_level?: string
-  search?: string
-  sort_by?: string
-  sort_order?: string
-  date_from?: string
-  date_to?: string
-}
+import type { ReviewFilters } from '@/lib/api'
 
 export function useReviews(filters: ReviewFilters = {}) {
   return useQuery<PaginatedResponse<Review>>({
@@ -35,7 +23,7 @@ export function useReview(id: string) {
 
 export function useGenerateReply() {
   const queryClient = useQueryClient()
-  return useMutation<Reply, Error, string>({
+  return useMutation<{ reply_id: string; content: string }, Error, string>({
     mutationFn: (reviewId: string) => api.generateReply(reviewId),
     onSuccess: (_data, reviewId) => {
       queryClient.invalidateQueries({ queryKey: ['review', reviewId] })
@@ -76,7 +64,7 @@ export function usePublishReply() {
 
 export function useRegenerateReply() {
   const queryClient = useQueryClient()
-  return useMutation<Reply, Error, string>({
+  return useMutation<{ reply_id: string; content: string }, Error, string>({
     mutationFn: (replyId: string) => api.regenerateReply(replyId),
     onSuccess: (_data, _replyId) => {
       queryClient.invalidateQueries({ queryKey: ['reviews'] })

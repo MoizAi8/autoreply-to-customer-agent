@@ -60,6 +60,7 @@ class KnowledgeRetrievalAgent:
                 business_id=business_id,
                 query=keyword_query,
                 limit=_MAX_DOCS - len(semantic_docs),
+                semantic=False,
             )
 
         seen_ids = {d["id"] for d in semantic_docs}
@@ -127,8 +128,6 @@ class KnowledgeRetrievalAgent:
                 context_parts.append(f"Content: {doc['content'][:600]}")
                 if doc.get("similarity", 0) > 0:
                     context_parts.append(f"Relevance: {round(doc['similarity'] * 100)}%")
-                if doc.get("metadata"):
-                    context_parts.append(f"Tags: {doc['metadata']}")
             context_parts.append("\n---")
             formatted_context = "\n".join(context_parts)
         else:

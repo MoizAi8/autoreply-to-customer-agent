@@ -13,16 +13,16 @@ NGINX (:80/:443)
 ```
 
 - **Backend**: FastAPI + SQLAlchemy 2.0 (async) + Celery + PostgreSQL + Redis
-- **Frontend**: Next.js 14 App Router + React 18 + TypeScript + Tailwind CSS 3
+- **Frontend**: Next.js 16 App Router + React 19 + TypeScript + Tailwind CSS 3
 - **Auth**: JWT (access + refresh tokens) with Zustand store
-- **AI**: Multi-agent pipeline (7 agents) using OpenAI GPT-4o
+- **AI**: Multi-agent pipeline (specialized stages) using OpenAI GPT-4o
 
 ## Tech Stack
 
 | Layer | Tools |
 |-------|-------|
-| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2, Celery |
-| Frontend | Next.js 14, React 18, TypeScript 5, Tailwind CSS 3, Radix UI primitives |
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2, Celery |
+| Frontend | Next.js 16, React 19, TypeScript 5, Tailwind CSS 3, Radix UI primitives |
 | State | TanStack Query (React Query 5), Zustand 5, Zod validation |
 | Data | PostgreSQL 16, Redis 7 |
 | AI | OpenAI GPT-4o, custom multi-agent pipeline, Pinecone/Qdrant vector DB |
@@ -35,7 +35,7 @@ backend/
 ├── app/
 │   ├── main.py              # FastAPI entry, middleware, routers
 │   ├── adapters/            # Platform API adapters (Google, Yelp, etc.)
-│   ├── agents/              # Multi-agent AI pipeline (7 agents)
+│   ├── agents/              # Multi-agent AI pipeline (specialized stages)
 │   ├── api/v1/              # REST routes (auth, reviews, analytics, etc.)
 │   ├── core/                # Config, database, dependencies, security
 │   ├── models/              # SQLAlchemy ORM models
@@ -75,14 +75,14 @@ frontend/
 ```bash
 npm run dev      # Dev server on :3000
 npm run build    # Production build
-npm run start    # Run built app
+npm run start    # Serve the static export
 npm run lint     # ESLint
 ```
 
 ### Backend
 ```bash
 cd backend && python run.py                    # Dev server on :8000
-cd backend && pytest --verbose --cov=.          # Run tests
+cd backend && pytest --verbose --cov=app          # Run tests
 cd backend && alembic upgrade head              # Run migrations
 ```
 
@@ -135,7 +135,7 @@ make clean       # Remove caches, node_modules, .next
 - **Validation**: Pydantic field validators for all config values (reject defaults in production)
 - **Errors**: Use `HTTPException` with proper status codes, global exception handler in `main.py`
 - **No inline `with logging.LoggerAdapter(...) as log:`** — plain assignment only (Python 3.14 removed context manager support)
-- **Database**: Use Alembic for migrations, auto-create tables on startup for dev
+- **Database**: Run Alembic before startup. Explicit local auto-create is available for development.
 
 ### Testing
 - Backend: `pytest` with `--cov` flag (tests in `backend/tests/`)
@@ -160,3 +160,7 @@ make clean       # Remove caches, node_modules, .next
 5. Include router in `backend/app/main.py`
 6. Add frontend API function in `frontend/src/lib/api.ts`
 7. Add TypeScript types in `frontend/src/types/index.ts`
+
+## Release boundaries
+
+The public portfolio sample uses fictional in-memory reviews. Authenticated drafts use the server-side API. Keep live AI disabled when public registration is enabled. Preserve the upstream license and never push portfolio changes to the original organization remote. See docs/DEPLOYMENT.md for runtime configuration.

@@ -20,6 +20,10 @@ def generate_uuid() -> str:
     return str(uuid4())
 
 
+def as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def slugify(text: str) -> str:
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     text = re.sub(r"[^\w\s-]", "", text.lower())

@@ -1,25 +1,24 @@
-from __future__ import annotations
-
 import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_business, get_current_user, get_db
+from app.core.dependencies import get_current_business, get_current_user, get_db, limiter
 from app.models.business import Business
 from app.models.user import User
 from app.schemas.common import SuccessResponse
-from app.schemas.reply import ReplyRejectRequest, ReplyUpdateRequest
-from app.services.reply_service import ReplyService
+from app.schemas.reply import ReplyRejectRequest, ReplyResponse, ReplyUpdateRequest
+from app.schemas.review import GenerateReplyRequest
+from app.services.reply_service import ReplyService, translate_generation_error
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/replies", tags=["Replies"])
 
 
-@router.get("/")
+@router.get("/", response_model=list[ReplyResponse])
 async def get_pending_replies(
     status_filter: Optional[str] = Query(None, alias="status"),
     current_user: User = Depends(get_current_user),
@@ -39,7 +38,7 @@ async def get_pending_replies(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch replies")
 
 
-@router.get("/{reply_id}")
+@router.get("/{reply_id}", response_model=ReplyResponse)
 async def get_reply(
     reply_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -69,12 +68,14 @@ async def update_reply(
 ):
     try:
         service = ReplyService(db)
-        reply = await service.update_reply(business_id=business.id, reply_id=reply_id, content=body.content)
+        reply = await service.update_reply(business_id=business.id, reply_id=reply_id, content=body.content, user_id=current_user.id)
         if not reply:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reply not found")
         return SuccessResponse(message="Reply updated", data={"reply_id": str(reply.id)})
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to update reply")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update reply")
@@ -89,12 +90,14 @@ async def approve_reply(
 ):
     try:
         service = ReplyService(db)
-        reply = await service.approve_reply(business_id=business.id, reply_id=reply_id)
+        reply = await service.approve_reply(business_id=business.id, reply_id=reply_id, user_id=current_user.id)
         if not reply:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reply not found")
         return SuccessResponse(message="Reply approved", data={"reply_id": str(reply.id)})
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to approve reply")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to approve reply")
@@ -110,12 +113,14 @@ async def reject_reply(
 ):
     try:
         service = ReplyService(db)
-        reply = await service.reject_reply(business_id=business.id, reply_id=reply_id, reason=body.reason)
+        reply = await service.reject_reply(business_id=business.id, reply_id=reply_id, reason=body.reason, user_id=current_user.id)
         if not reply:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reply not found")
         return SuccessResponse(message="Reply rejected", data={"reply_id": str(reply.id)})
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to reject reply")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reject reply")
@@ -158,20 +163,23 @@ async def publish_reply(
         return SuccessResponse(message="Reply published", data={"reply_id": str(reply.id)})
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to publish reply")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to publish reply")
 
 
 @router.post("/{reply_id}/regenerate")
+@limiter.shared_limit("5/minute", scope="ai-drafting")
 async def regenerate_reply(
     reply_id: UUID,
-    body: dict = {},
+    request: Request,
+    body: GenerateReplyRequest = GenerateReplyRequest(),
     current_user: User = Depends(get_current_user),
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
 ):
-    custom_instructions = body.get("custom_instructions", "")
     try:
         service = ReplyService(db)
         reply = await service.get_reply(business_id=business.id, reply_id=reply_id)
@@ -179,13 +187,13 @@ async def regenerate_reply(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reply not found")
 
         reply = await service.regenerate_reply(
-            business_id=business.id, review_id=reply.review_id, custom_instructions=custom_instructions
+            business_id=business.id, review_id=reply.review_id, custom_instructions=body.instructions()
         )
         return SuccessResponse(message="Reply regenerated", data={"reply_id": str(reply.id), "content": reply.content})
     except HTTPException:
         raise
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise translate_generation_error(exc) from exc
     except Exception as exc:
         logger.exception("Failed to regenerate reply")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to regenerate reply")

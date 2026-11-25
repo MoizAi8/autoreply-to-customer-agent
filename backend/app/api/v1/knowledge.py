@@ -11,6 +11,7 @@ from app.core.dependencies import get_current_business, get_current_user, get_db
 from app.models.business import Business
 from app.models.user import User
 from app.schemas.common import SuccessResponse
+from app.schemas.knowledge import KnowledgeCreate, KnowledgeUpdate
 from app.services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ async def get_entry(
 
 @router.post("/")
 async def create_entry(
-    body: dict,
+    body: KnowledgeCreate,
     current_user: User = Depends(get_current_user),
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
@@ -84,10 +85,7 @@ async def create_entry(
         service = KnowledgeService(db)
         entry = await service.add_entry(
             business_id=business.id,
-            category=body.get("category", "general"),
-            title=body.get("title", ""),
-            content=body.get("content", ""),
-            metadata=body.get("metadata"),
+            **body.model_dump(),
         )
         return SuccessResponse(
             message="Entry created",
@@ -101,7 +99,7 @@ async def create_entry(
 @router.patch("/{entry_id}")
 async def update_entry(
     entry_id: UUID,
-    body: dict,
+    body: KnowledgeUpdate,
     current_user: User = Depends(get_current_user),
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
@@ -111,7 +109,7 @@ async def update_entry(
         entry = await service.update_entry(
             business_id=business.id,
             entry_id=entry_id,
-            data=body,
+            data=body.model_dump(exclude_none=True),
         )
         if not entry:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -14,6 +16,7 @@ from app.core.security import (
     create_refresh_token,
     hash_password,
     verify_password,
+    verify_token,
 )
 from app.models.business import Business
 from app.models.user import User
@@ -61,7 +64,8 @@ class AuthService:
         await self.db.flush()
 
         verification_token = create_access_token(
-            {"sub": str(user.id), "type": "email_verify"},
+            {"sub": str(user.id)},
+            token_type="email_verify",
             expires_delta=timedelta(hours=24),
         )
         await send_verification_email(email, verification_token)
@@ -83,7 +87,10 @@ class AuthService:
         if user.mfa_enabled:
             return {
                 "requires_mfa": True,
-                "user_id": str(user.id),
+                "challenge_token": create_access_token(
+                    {"sub": str(user.id), "password_version": self._password_version(user)},
+                    timedelta(minutes=5), token_type="mfa",
+                ),
             }
 
         user.last_login_at = datetime.now(timezone.utc)
@@ -116,6 +123,10 @@ class AuthService:
         await self.db.flush()
         return {"verified": True}
 
+    @staticmethod
+    def _password_version(user: User) -> str:
+        return hmac.new(settings.SECRET_KEY.encode(), user.hashed_password.encode(), hashlib.sha256).hexdigest()
+
     async def forgot_password(self, email: str) -> dict:
         result = await self.db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
@@ -123,7 +134,8 @@ class AuthService:
             return {"message": "If the email exists, a reset link has been sent"}
 
         reset_token = create_access_token(
-            {"sub": str(user.id), "type": "password_reset"},
+            {"sub": str(user.id), "password_version": self._password_version(user)},
+            token_type="password_reset",
             expires_delta=timedelta(hours=1),
         )
         await send_password_reset(email, reset_token)
@@ -142,6 +154,8 @@ class AuthService:
         if not user:
             raise ValueError("User not found")
 
+        if payload.get("password_version") != self._password_version(user):
+            raise ValueError("Reset link is no longer valid")
         user.hashed_password = hash_password(new_password)
         await self.db.flush()
         return {"reset": True}
@@ -152,6 +166,8 @@ class AuthService:
         if not user:
             raise ValueError("User not found")
 
+        if user.mfa_enabled:
+            raise ValueError("MFA is already enabled")
         secret = pyotp.random_base32()
         user.mfa_secret = secret
         await self.db.flush()
@@ -169,7 +185,7 @@ class AuthService:
     async def verify_mfa(self, user_id: UUID, code: str) -> dict:
         result = await self.db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-        if not user or not user.mfa_secret:
+        if not user or not user.mfa_secret or user.mfa_enabled:
             raise ValueError("MFA not configured")
 
         totp = pyotp.TOTP(user.mfa_secret)
@@ -187,6 +203,21 @@ class AuthService:
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
+        }
+
+    async def complete_mfa_login(self, challenge_token: str, code: str) -> dict:
+        payload = verify_token(challenge_token, expected_type="mfa")
+        user = await self.db.get(User, UUID(payload["sub"]), with_for_update=True)
+        if not user or not user.is_active or not user.mfa_enabled or not user.mfa_secret:
+            raise ValueError("Invalid sign-in challenge")
+        if payload.get("password_version") != self._password_version(user) or not pyotp.TOTP(user.mfa_secret).verify(code):
+            raise ValueError("Invalid authentication code")
+        user.last_login_at = datetime.now(timezone.utc)
+        return {
+            "access_token": create_access_token({"sub": str(user.id)}),
+            "refresh_token": create_refresh_token({"sub": str(user.id)}),
+            "token_type": "bearer",
+            "user_id": str(user.id),
         }
 
     async def refresh_token(self, refresh_token: str) -> dict:

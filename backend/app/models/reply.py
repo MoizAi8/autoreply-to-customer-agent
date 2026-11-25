@@ -48,3 +48,19 @@ class Reply(Base):
     )
 
     review = relationship("Review", back_populates="reply")
+
+    @property
+    def is_ai_generated(self) -> bool:
+        return (self.ai_metadata or {}).get("source") == "openai"
+
+    @property
+    def human_edited(self) -> bool:
+        return bool((self.ai_metadata or {}).get("human_edited"))
+
+    @property
+    def workflow_steps(self) -> list[dict[str, Any]]:
+        return [
+            {"step": event["step"], "status": event["status"], "duration_ms": event.get("duration_ms", 0)}
+            for event in (self.ai_metadata or {}).get("pipeline_log", [])
+            if isinstance(event, dict) and isinstance(event.get("step"), str) and isinstance(event.get("status"), str)
+        ]

@@ -9,7 +9,7 @@ from celery import Task
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, engine
 from app.models.review import Review
 from app.models.usage import UsageMetric
 from app.workers.celery_app import celery_app
@@ -22,6 +22,7 @@ def _run_async(coro):
     try:
         return loop.run_until_complete(coro)
     finally:
+        loop.run_until_complete(engine.dispose())
         loop.close()
 
 
@@ -38,17 +39,19 @@ class DatabaseTask(Task):
                 pass
 
 
-@celery_app.task(base=DatabaseTask, bind=True, name="process_review_task")
+@celery_app.task(base=DatabaseTask, bind=True, name="process_review_task", max_retries=1)
 def process_review_task(self, business_id: str, review_id: str):
     from app.agents.orchestrator import AIOrchestrator
 
     async def _process():
         async with AsyncSessionLocal() as db:
             orchestrator = AIOrchestrator(db)
-            result = await orchestrator.process_review(
-                business_id=UUID(business_id),
-                review_id=UUID(review_id),
-            )
+            try:
+                result = await orchestrator.process_review(
+                    business_id=UUID(business_id), review_id=UUID(review_id), reuse_existing=True,
+                )
+            finally:
+                await orchestrator.openai_client.close()
             await db.commit()
             return {
                 "reply_id": str(result.reply.id),
@@ -65,7 +68,7 @@ def process_review_task(self, business_id: str, review_id: str):
         raise self.retry(exc=exc, countdown=60)
 
 
-@celery_app.task(base=DatabaseTask, bind=True, name="publish_reply_task")
+@celery_app.task(base=DatabaseTask, bind=True, name="publish_reply_task", max_retries=0)
 def publish_reply_task(self, business_id: str, reply_id: str):
     from app.services.reply_service import ReplyService
 

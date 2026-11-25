@@ -18,11 +18,7 @@ export default function VerifyEmailPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!token) {
-      setStatus('error')
-      setError('No verification token provided')
-      return
-    }
+    if (!token) return
 
     const verify = async () => {
       try {
@@ -48,7 +44,7 @@ export default function VerifyEmailPage() {
         animate={{ opacity: 1, y: 0 }}
         className="rounded-2xl border border-white/20 bg-white/90 p-8 shadow-2xl backdrop-blur-xl dark:bg-neutral-900/90 text-center"
       >
-        {status === 'loading' && (
+        {token && status === 'loading' && (
           <>
             <Loader2 className="mx-auto h-12 w-12 animate-spin text-sky-600" />
             <h2 className="mt-4 text-xl font-bold text-neutral-900 dark:text-white">Verifying your email...</h2>
@@ -67,11 +63,11 @@ export default function VerifyEmailPage() {
           </>
         )}
 
-        {status === 'error' && (
+        {(!token || status === 'error') && (
           <>
             <XCircle className="mx-auto h-12 w-12 text-red-500" />
             <h2 className="mt-4 text-xl font-bold text-neutral-900 dark:text-white">Verification Failed</h2>
-            <p className="mt-2 text-sm text-neutral-500">{error}</p>
+            <p className="mt-2 text-sm text-neutral-500">{!token ? 'No verification token provided' : error}</p>
             <div className="mt-6 flex justify-center gap-3">
               <Button variant="outline" onClick={() => router.push('/login')}>Go to Login</Button>
             </div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -26,10 +26,23 @@ class Base(DeclarativeBase):
 _is_sqlite = str(settings.DATABASE_URL).startswith("sqlite")
 engine = create_async_engine(
     str(settings.DATABASE_URL),
-    echo=settings.DEBUG,
+    hide_parameters=True,
     pool_pre_ping=True,
-    **({} if _is_sqlite else {"pool_size": 20, "max_overflow": 10}),
+    **({} if _is_sqlite else {"pool_size": 5, "max_overflow": 5, "pool_timeout": 10,
+                             "connect_args": {"timeout": 10, "command_timeout": 30}}),
 )
+
+if _is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def configure_sqlite(connection, _):
+        connection.isolation_level = None
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def begin_sqlite(connection):
+        connection.exec_driver_sql("BEGIN")
 
 AsyncSessionLocal = async_sessionmaker(
     engine,

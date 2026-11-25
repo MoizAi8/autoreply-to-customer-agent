@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
+import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import type { MonthlyActivity } from '@/types'
 
@@ -19,18 +20,20 @@ interface ActivityChartProps {
   className?: string
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+type TooltipEntry = { name?: string; color?: string; value?: string | number }
+
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: string }) => {
   if (!active || !payload?.length) return null
   return (
     <div className="rounded-xl border bg-card/95 backdrop-blur-sm p-3 shadow-xl text-xs">
       <p className="mb-2 font-medium text-foreground">{label}</p>
-      {payload.map((entry: any) => (
+      {payload.map((entry) => (
         <div key={entry.name} className="flex items-center gap-2 py-0.5">
           <span
             className="h-2.5 w-2.5 rounded-full"
             style={{ backgroundColor: entry.color }}
           />
-          <span className="capitalize text-muted-foreground">{entry.name.replace('_', ' ')}</span>
+          <span className="capitalize text-muted-foreground">{entry.name?.replace('_', ' ')}</span>
           <span className="ml-auto font-medium text-foreground">{entry.value}</span>
         </div>
       ))}
@@ -56,8 +59,9 @@ export function ActivityChart({ data, loading, className }: ActivityChartProps) 
   }
 
   return (
-    <div className={cn('w-full', className)}>
-      <ResponsiveContainer width="100%" height={300}>
+    <Card className={cn('min-w-0 overflow-hidden p-4 sm:p-5', className)}>
+      <h2 className="mb-2 font-semibold">Monthly review and response activity</h2>
+      <ResponsiveContainer width="100%" height={300} minWidth={0}>
         <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="reviewsGrad" x1="0" y1="0" x2="0" y2="1">
@@ -93,6 +97,7 @@ export function ActivityChart({ data, loading, className }: ActivityChartProps) 
             iconSize={8}
           />
           <Area
+            isAnimationActive={false}
             type="monotone"
             dataKey="reviews"
             name="Reviews"
@@ -101,6 +106,7 @@ export function ActivityChart({ data, loading, className }: ActivityChartProps) 
             fill="url(#reviewsGrad)"
           />
           <Area
+            isAnimationActive={false}
             type="monotone"
             dataKey="replies"
             name="Replies"
@@ -109,6 +115,7 @@ export function ActivityChart({ data, loading, className }: ActivityChartProps) 
             fill="url(#repliesGrad)"
           />
           <Area
+            isAnimationActive={false}
             type="monotone"
             dataKey="ai_generations"
             name="AI Generations"
@@ -118,6 +125,6 @@ export function ActivityChart({ data, loading, className }: ActivityChartProps) 
           />
         </AreaChart>
       </ResponsiveContainer>
-    </div>
+    </Card>
   )
 }

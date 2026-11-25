@@ -14,12 +14,13 @@ from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from app.api.v1 import admin, analytics, auth, brand, knowledge, platforms, replies, reviews
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import engine, init_db
 from app.core.dependencies import limiter
 from app.core.logging_config import setup_logging
 from app.core.redis import get_redis
@@ -69,23 +70,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AutoReply AI backend...")
-    try:
+    if settings.AUTO_CREATE_TABLES:
         await init_db()
         logger.info("Database tables initialized")
-    except Exception as exc:
-        logger.warning("Database initialization deferred: %s", exc)
-    try:
-        redis_conn = await get_redis()
-        if redis_conn:
-            logger.info("Redis connected")
-        else:
-            logger.warning("Redis not available")
-    except Exception as exc:
-        logger.warning("Redis connection failed: %s", exc)
+    if settings.REDIS_URL:
+        await get_redis()
     yield
     logger.info("Shutting down...")
-    from app.core.database import engine as db_engine
-    await db_engine.dispose()
+    await engine.dispose()
     try:
         from app.core.redis import close_redis
         await close_redis()
@@ -107,7 +99,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -119,29 +111,53 @@ app.add_middleware(RequestLoggingMiddleware)
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next: Any) -> Response:
     method = request.method
-    path = request.url.path
     start = time.time()
     try:
         response = await call_next(request)
         status = response.status_code
+        path = getattr(request.scope.get("route"), "path", "unmatched")
         REQUEST_COUNT.labels(method=method, endpoint=path, status=status).inc()
         REQUEST_DURATION.labels(method=method, endpoint=path).observe(time.time() - start)
         return response
-    except Exception as exc:
+    except Exception:
+        path = getattr(request.scope.get("route"), "path", "unmatched")
         REQUEST_COUNT.labels(method=method, endpoint=path, status=500).inc()
         REQUEST_DURATION.labels(method=method, endpoint=path).observe(time.time() - start)
         raise
 
 
-@app.middleware("http")
-async def request_body_limit_middleware(request: Request, call_next: Any) -> Response:
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > settings.MAX_REQUEST_BODY_SIZE:
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Request body too large"},
-        )
-    return await call_next(request)
+class RequestBodyLimitMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] not in {"POST", "PUT", "PATCH", "DELETE"}:
+            await self.app(scope, receive, send)
+            return
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                return
+            if len(body) + len(message.get("body", b"")) > settings.MAX_REQUEST_BODY_SIZE:
+                await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+                return
+            body.extend(message.get("body", b""))
+            if not message.get("more_body"):
+                break
+        consumed = False
+
+        async def replay():
+            nonlocal consumed
+            if consumed:
+                return await receive()
+            consumed = True
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        await self.app(scope, replay, send)
+
+
+app.add_middleware(RequestBodyLimitMiddleware)
 
 
 app.include_router(auth.router)
@@ -164,8 +180,20 @@ async def health():
 
 
 @app.get("/metrics")
-async def metrics():
+async def metrics(request: Request):
+    if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+        raise HTTPException(status_code=404, detail="Not found")
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/ready")
+async def ready():
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1 FROM reviews WHERE 1 = 0"))
+    except Exception:
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    return {"status": "ready"}
 
 
 @app.exception_handler(HTTPException)
@@ -173,13 +201,14 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
+        headers=exc.headers,
     )
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.exception("Unhandled exception [%s]: %s", request_id, exc)
+    logger.error("Unhandled exception [%s] (%s)", request_id, type(exc).__name__)
     if settings.SENTRY_DSN:
         sentry_sdk.capture_exception(exc)
     return JSONResponse(

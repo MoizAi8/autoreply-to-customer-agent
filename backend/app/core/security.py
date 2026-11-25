@@ -7,7 +7,8 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 def create_access_token(
     data: dict[str, Any],
     expires_delta: Optional[timedelta] = None,
+    *, token_type: str = "access",
 ) -> str:
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
@@ -29,7 +31,7 @@ def create_access_token(
         expire = now + expires_delta
     else:
         expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "type": "access"})
+    to_encode.update({"exp": expire, "type": token_type})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -45,7 +47,8 @@ def create_refresh_token(data: dict[str, Any]) -> str:
 def verify_token(token: str, expected_type: Optional[str] = None) -> dict[str, Any]:
     try:
         payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+            token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM],
+            options={"require": ["sub", "exp", "type"]},
         )
         token_type = payload.get("type")
         if expected_type and token_type != expected_type:
@@ -57,7 +60,7 @@ def verify_token(token: str, expected_type: Optional[str] = None) -> dict[str, A
         return payload
     except HTTPException:
         raise
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -66,7 +69,9 @@ def verify_token(token: str, expected_type: Optional[str] = None) -> dict[str, A
 
 
 def hash_password(password: str) -> str:
-    password_bytes = password.encode("utf-8")[:72]
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        raise ValueError("Password must be at most 72 UTF-8 bytes")
     salt = bcrypt.gensalt(rounds=12)
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 

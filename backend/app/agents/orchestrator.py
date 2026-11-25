@@ -6,7 +6,7 @@ import time
 from typing import Any, NamedTuple, Optional
 from uuid import UUID, uuid4
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI, RateLimitError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,8 +33,20 @@ from app.utils.helpers import calculate_cost, now
 
 logger = logging.getLogger(__name__)
 
-AGENT_TIMEOUT_SECONDS = 30
-MAX_RETRIES = 2
+AGENT_TIMEOUT_SECONDS = 18
+MAX_RETRIES = 0
+
+
+class GenerationUnavailable(ValueError):
+    pass
+
+
+class GenerationConflict(ValueError):
+    pass
+
+
+class ReviewNotFound(ValueError):
+    pass
 
 
 class OrchestrationResult(NamedTuple):
@@ -47,7 +59,9 @@ class OrchestrationResult(NamedTuple):
 class AIOrchestrator:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
-        self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        self.openai_client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY, timeout=settings.AI_REQUEST_TIMEOUT_SECONDS, max_retries=0
+        )
 
         self.input_validator = InputValidationAgent()
         self.language_detector = LanguageDetectionAgent()
@@ -67,11 +81,11 @@ class AIOrchestrator:
         self, business_id: UUID, review_id: UUID
     ) -> tuple[Review, Business, BrandVoice]:
         review_result = await self.db.execute(
-            select(Review).where(Review.id == review_id, Review.business_id == business_id)
+            select(Review).where(Review.id == review_id, Review.business_id == business_id).with_for_update()
         )
         review = review_result.scalar_one_or_none()
         if not review:
-            raise ValueError(f"Review {review_id} not found")
+            raise ReviewNotFound("Review not found")
 
         business_result = await self.db.execute(
             select(Business).where(Business.id == business_id)
@@ -127,8 +141,8 @@ class AIOrchestrator:
                 last_error = f"Timeout ({AGENT_TIMEOUT_SECONDS}s)"
                 logger.warning("%s timeout on attempt %d/%d", step_name, attempt + 1, 1 + max_retries)
             except Exception as exc:
-                last_error = str(exc)
-                logger.warning("%s error on attempt %d/%d: %s", step_name, attempt + 1, 1 + max_retries, exc)
+                last_error = type(exc).__name__
+                logger.warning("%s failed on attempt %d/%d (%s)", step_name, attempt + 1, 1 + max_retries, last_error)
                 if attempt < max_retries:
                     await asyncio.sleep(2 ** attempt)
         return {
@@ -145,11 +159,22 @@ class AIOrchestrator:
         business_id: UUID,
         review_id: UUID,
         custom_instructions: Optional[str] = None,
+        reuse_existing: bool = False,
     ) -> OrchestrationResult:
         pipeline_log: list[dict[str, Any]] = []
         start_time = time.monotonic()
 
         review, business, brand = await self._load_entities(business_id, review_id)
+        existing_reply = await self.db.scalar(
+            select(Reply).where(Reply.review_id == review_id, Reply.business_id == business_id).with_for_update()
+        )
+        if reuse_existing and existing_reply:
+            metadata = existing_reply.ai_metadata or {}
+            return OrchestrationResult(existing_reply, {}, metadata.get("decisions", {}), metadata.get("pipeline_log", []))
+        if existing_reply and existing_reply.status == "published":
+            raise GenerationConflict("Published responses cannot be regenerated")
+        if not settings.AI_GENERATION_ENABLED or not settings.OPENAI_API_KEY:
+            raise GenerationUnavailable("Live AI drafting is disabled for this deployment")
 
         # Step 1: Input Validation
         step = await self._run_agent_step("input_validation", self.input_validator.validate,
@@ -159,8 +184,10 @@ class AIOrchestrator:
         if validation_result and hasattr(validation_result, "clean_text") and validation_result.clean_text:
             review_text = validation_result.clean_text
         risk_flags = validation_result.risk_flags if validation_result and hasattr(validation_result, "risk_flags") else []
-        is_valid = validation_result.is_valid if validation_result and hasattr(validation_result, "is_valid") else True
+        is_valid = bool(validation_result and validation_result.is_valid)
         pipeline_log.append(step)
+        if not is_valid:
+            raise ValueError("This review needs manual handling before AI drafting")
 
         # Step 2: Language Detection
         step = await self._run_agent_step("language_detection", self.language_detector.detect, review_text)
@@ -223,26 +250,31 @@ class AIOrchestrator:
         pipeline_log.append(step)
 
         # Step 7: Reply Generation
-        gen_result = None
-        for attempt in range(2):
-            step = await self._run_agent_step("reply_generation", self.reply_generator.generate,
-                                              business_id, review, brand, brand_context,
-                                              custom_instructions, risk_level)
-            gen_result = step.get("result")
-            if gen_result and hasattr(gen_result, "reply_text") and gen_result.reply_text:
-                break
-            logger.warning("Empty reply from generation, retrying (attempt %d)", attempt + 1)
-        pipeline_log.append(step)
+        async def generate_draft():
+            for attempt in range(2):
+                try:
+                    return await self.reply_generator.generate(business, review, brand, brand_context, custom_instructions, risk_level)
+                except RateLimitError:
+                    raise
+                except (APIConnectionError, APIStatusError) as exc:
+                    if attempt or isinstance(exc, APIStatusError) and exc.status_code < 500:
+                        raise
+                    await asyncio.sleep(0.5)
 
-        reply_text = gen_result.reply_text if gen_result and hasattr(gen_result, "reply_text") else "Thank you for your feedback."
-        gen_raw = gen_result.raw_response if gen_result and hasattr(gen_result, "raw_response") else {}
+        step = await self._run_agent_step("reply_generation", generate_draft)
+        pipeline_log.append(step)
+        gen_result = step["result"]
+        if gen_result is None:
+            raise GenerationUnavailable("The AI provider did not return a draft. Try again later.")
+        reply_text = gen_result.reply_text
+        gen_raw = gen_result.raw_response
 
         # Step 8: Safety Guardrail
         step = await self._run_agent_step("safety_guardrail", self.safety_guardrail.check,
                                           reply_text, review_text, brand_context)
         sg_result = step.get("result")
-        is_safe = sg_result.is_safe if sg_result and hasattr(sg_result, "is_safe") else True
-        safety_score = sg_result.safety_score if sg_result and hasattr(sg_result, "safety_score") else 1.0
+        is_safe = bool(sg_result and sg_result.is_safe)
+        safety_score = sg_result.safety_score if sg_result else 0.0
         violations = sg_result.violations if sg_result and hasattr(sg_result, "violations") else []
         pipeline_log.append(step)
 
@@ -264,25 +296,19 @@ class AIOrchestrator:
         )
 
         decisions: dict[str, Any] = {
-            "route_to_human": wf_decision["needs_review"],
-            "auto_approve": wf_decision["auto_approve"],
+            "route_to_human": True,
+            "auto_approve": False,
             "reasons": wf_decision.get("reasons", []),
         }
 
-        if not decisions["route_to_human"] and (quality_score < 50 or safety_score < 50):
-            decisions["route_to_human"] = True
-            decisions["reasons"].append("critical_score_threshold")
-
-        reply_status = "approved" if decisions["auto_approve"] else "pending_approval"
-
-        # Create or update Reply
-        existing_reply_result = await self.db.execute(
-            select(Reply).where(Reply.review_id == review_id)
-        )
-        existing_reply = existing_reply_result.scalar_one_or_none()
+        if needs_human or not is_safe or not passes_threshold or risk_flags:
+            decisions["reasons"].append("manual_attention_required")
+        reply_status = "pending_approval"
+        events = [{key: value for key, value in step.items() if key != "result"} for step in pipeline_log]
 
         ai_meta = {
-            "pipeline_log": pipeline_log,
+            "source": "openai",
+            "pipeline_log": events,
             "decisions": decisions,
             "intent": intent,
             "intent_confidence": intent_confidence,
@@ -302,6 +328,7 @@ class AIOrchestrator:
         if existing_reply:
             existing_reply.content = reply_text
             existing_reply.status = reply_status
+            existing_reply.rejection_reason = None
             existing_reply.quality_score = quality_score / 100.0
             existing_reply.safety_score = safety_score
             existing_reply.ai_metadata = ai_meta
@@ -362,5 +389,5 @@ class AIOrchestrator:
                 "quality_breakdown": quality_breakdown,
             },
             decisions=decisions,
-            pipeline_log=pipeline_log,
+            pipeline_log=events,
         )

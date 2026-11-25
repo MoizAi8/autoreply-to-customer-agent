@@ -6,9 +6,35 @@ import type {
   PaginatedResponse
 } from '@/types'
 
+export function errorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error) && typeof error.response?.data?.detail === 'string') return error.response.data.detail
+  return fallback
+}
+
+type DraftOptions = {
+  tone?: 'professional' | 'friendly' | 'formal' | 'empathetic' | 'concise'
+  length?: 'short' | 'medium' | 'long'
+}
+
+export type ReviewFilters = {
+  page?: number
+  page_size?: number
+  sentiment?: string
+  platform?: string
+  rating?: number
+  risk_level?: string
+  search?: string
+  sort_by?: string
+  sort_order?: string
+  date_from?: string
+  date_to?: string
+  response_status?: string
+}
+
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1',
   headers: { 'Content-Type': 'application/json' },
+  timeout: 100000,
 })
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
@@ -23,7 +49,7 @@ api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !['/auth/login', '/auth/mfa/login'].includes(originalRequest.url ?? '')) {
       originalRequest._retry = true
       try {
         const refreshToken = getRefreshToken()
@@ -48,8 +74,16 @@ api.interceptors.response.use(
   }
 )
 
-export async function login(email: string, password: string): Promise<{ user_id: string; access_token: string; refresh_token: string; token_type: string }> {
+export type SessionTokens = { user_id: string; access_token: string; refresh_token: string; token_type: string }
+type LoginResult = SessionTokens | { requires_mfa: true; challenge_token: string }
+
+export async function login(email: string, password: string): Promise<LoginResult> {
   const { data } = await api.post('/auth/login', { email, password })
+  return data.data
+}
+
+export async function completeMfa(challenge_token: string, code: string): Promise<SessionTokens> {
+  const { data } = await api.post('/auth/mfa/login', { challenge_token, code })
   return data.data
 }
 
@@ -103,18 +137,8 @@ export async function getMonthlyActivity(months?: number): Promise<MonthlyActivi
   return data
 }
 
-export async function getReviews(params?: {
-  page?: number
-  page_size?: number
-  sentiment?: string
-  platform?: string
-  rating?: number
-  risk_level?: string
-  search?: string
-  sort_by?: string
-  sort_order?: string
-}): Promise<PaginatedResponse<Review>> {
-  const { data } = await api.get('/reviews', { params })
+export async function getReviews(params?: ReviewFilters): Promise<PaginatedResponse<Review>> {
+  const { data } = await api.get('/reviews/', { params })
   return data
 }
 
@@ -123,9 +147,34 @@ export async function getReview(id: string): Promise<Review> {
   return data
 }
 
-export async function generateReply(reviewId: string): Promise<Reply> {
-  const { data } = await api.post(`/reviews/${reviewId}/generate-reply`)
+export async function createReview(review: { customer_name?: string; rating: number; title?: string; content: string; review_date?: string }): Promise<Review> {
+  const { data } = await api.post('/reviews/', review)
   return data
+}
+
+export async function importReviews(csv: string): Promise<{ imported: number; duplicates: number; errors: { row: number; message: string }[] }> {
+  const { data } = await api.post('/reviews/import', { csv })
+  return data
+}
+
+export async function saveDraft(reviewId: string, content: string): Promise<Reply> {
+  const { data } = await api.put('/reviews/' + reviewId + '/draft', { content })
+  return data
+}
+
+export async function getReviewHistory(reviewId: string): Promise<{ id: string; action: string; created_at: string }[]> {
+  const { data } = await api.get('/reviews/' + reviewId + '/history')
+  return data
+}
+
+export async function getWorkflowStatus(): Promise<{ ai_enabled: boolean; awaiting_approval: number; generated: number }> {
+  const { data } = await api.get('/reviews/workflow')
+  return data
+}
+
+export async function generateReply(reviewId: string, options?: DraftOptions): Promise<{ reply_id: string; content: string }> {
+  const { data } = await api.post('/reviews/' + reviewId + '/generate-reply', options)
+  return data.data
 }
 
 export async function updateReply(replyId: string, content: string): Promise<Reply> {
@@ -138,8 +187,8 @@ export async function approveReply(replyId: string): Promise<Reply> {
   return data
 }
 
-export async function rejectReply(replyId: string): Promise<Reply> {
-  const { data } = await api.post(`/replies/${replyId}/reject`)
+export async function rejectReply(replyId: string, reason = 'Rejected by reviewer'): Promise<Reply> {
+  const { data } = await api.post(`/replies/${replyId}/reject`, { reason })
   return data
 }
 
@@ -148,23 +197,23 @@ export async function publishReply(replyId: string): Promise<Reply> {
   return data
 }
 
-export async function regenerateReply(replyId: string): Promise<Reply> {
-  const { data } = await api.post(`/replies/${replyId}/regenerate`)
-  return data
+export async function regenerateReply(replyId: string, options?: DraftOptions): Promise<{ reply_id: string; content: string }> {
+  const { data } = await api.post(`/replies/${replyId}/regenerate`, options)
+  return data.data
 }
 
 export async function flagReview(reviewId: string, reason: string): Promise<Review> {
-  const { data } = await api.post(`/reviews/${reviewId}/flag`, { reason })
+  const { data } = await api.patch(`/reviews/${reviewId}/flag`, { reason })
   return data
 }
 
 export async function getBrandVoice(): Promise<BrandVoice> {
-  const { data } = await api.get('/brand')
+  const { data } = await api.get('/brand/')
   return data
 }
 
 export async function updateBrandVoice(bv: Partial<BrandVoice>): Promise<BrandVoice> {
-  const { data } = await api.patch('/brand', bv)
+  const { data } = await api.patch('/brand/', bv)
   return data
 }
 
@@ -188,7 +237,7 @@ export async function getUsageMetrics(): Promise<any> {
   return data
 }
 
-export async function getAdminHealth(): Promise<any> {
+export async function getAdminHealth(): Promise<Record<string, unknown>> {
   const { data } = await api.get('/admin/health')
   return data
 }

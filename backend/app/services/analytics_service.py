@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Date, cast, extract, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.platform import PlatformConnection
@@ -24,20 +24,22 @@ class AnalyticsService:
         )
         total_reviews = total_reviews_result.scalar() or 0
 
-        pending_replies_result = await self.db.execute(
-            select(func.count()).where(
-                Reply.business_id == business_id,
-                Reply.status.in_(["pending", "pending_approval"]),
-            )
-        )
-        pending_replies = pending_replies_result.scalar() or 0
-
-        auto_replied_result = await self.db.execute(
-            select(func.count()).where(
-                Reply.business_id == business_id, Reply.status == "published"
-            )
-        )
-        auto_replied = auto_replied_result.scalar() or 0
+        status_rows = await self.db.execute(select(Reply.status, func.count()).where(
+            Reply.business_id == business_id,
+        ).group_by(Reply.status))
+        statuses = dict(status_rows.tuples().all())
+        approved = statuses.get("approved", 0)
+        published = statuses.get("published", 0)
+        pending_replies = total_reviews - approved - published
+        rating_rows = await self.db.execute(select(Review.rating, func.count()).where(
+            Review.business_id == business_id,
+        ).group_by(Review.rating))
+        ratings = {str(rating): count for rating, count in rating_rows}
+        sentiment_rows = await self.db.execute(select(Review.sentiment, func.count()).where(
+            Review.business_id == business_id,
+            Review.sentiment.isnot(None),
+        ).group_by(Review.sentiment))
+        sentiments = dict(sentiment_rows.tuples().all())
 
         avg_rating_result = await self.db.execute(
             select(func.avg(Review.rating)).where(Review.business_id == business_id)
@@ -55,10 +57,13 @@ class AnalyticsService:
         )
         ai_usage = ai_usage_result.scalar() or 0
 
+        elapsed_seconds = (
+            (func.julianday(Reply.published_at) - func.julianday(Review.created_at)) * 86400
+            if self.db.bind.dialect.name == "sqlite"
+            else func.extract("epoch", Reply.published_at - Review.created_at)
+        )
         response_time_result = await self.db.execute(
-            select(func.avg(
-                func.extract("epoch", Reply.published_at - Review.created_at)
-            )).select_from(
+            select(func.avg(elapsed_seconds)).select_from(
                 Reply.__table__.join(
                     Review.__table__,
                     Reply.review_id == Review.id,
@@ -82,8 +87,13 @@ class AnalyticsService:
         return {
             "total_reviews": total_reviews,
             "pending_replies": pending_replies,
-            "auto_replied": auto_replied,
-            "manual_replies": max(0, total_reviews - auto_replied),
+            "auto_replied": published,
+            "manual_replies": approved,
+            "approved_replies": approved,
+            "published_replies": published,
+            "completion_rate": round(100 * (approved + published) / total_reviews, 1) if total_reviews else 0.0,
+            "ratings": ratings,
+            "sentiments": sentiments,
             "avg_rating": avg_rating,
             "ai_usage": ai_usage,
             "avg_response_time": avg_response_time,
@@ -93,10 +103,12 @@ class AnalyticsService:
     async def get_sentiment_trends(
         self, business_id: UUID, days: int = 30
     ) -> list[dict[str, Any]]:
-        cutoff = now() - timedelta(days=days)
+        today = now().replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = today - timedelta(days=days - 1)
+        date = func.date(Review.review_date) if self.db.bind.dialect.name == "sqlite" else func.date(func.timezone("UTC", Review.review_date))
         rows = await self.db.execute(
             select(
-                cast(Review.review_date, Date).label("date"),
+                date.label("date"),
                 Review.sentiment,
                 func.count().label("cnt"),
             )
@@ -105,8 +117,8 @@ class AnalyticsService:
                 Review.review_date >= cutoff,
                 Review.sentiment.isnot(None),
             )
-            .group_by(cast(Review.review_date, Date), Review.sentiment)
-            .order_by(cast(Review.review_date, Date))
+            .group_by(date, Review.sentiment)
+            .order_by(date)
         )
 
         trends: dict[str, dict[str, int]] = {}
@@ -117,7 +129,7 @@ class AnalyticsService:
 
         for row in rows:
             day_str = str(row.date)
-            if day_str in trends:
+            if day_str in trends and row.sentiment in sentiments:
                 trends[day_str][row.sentiment] = row.cnt
 
         return [
@@ -177,59 +189,27 @@ class AnalyticsService:
     async def get_monthly_activity(
         self, business_id: UUID, months: int = 12
     ) -> list[dict[str, Any]]:
-        cutoff = now() - timedelta(days=30 * months)
-        reviews_result = await self.db.execute(
-            select(
-                func.date_trunc("month", Review.created_at).label("month"),
-                func.count().label("cnt"),
-            )
-            .where(
-                Review.business_id == business_id,
-                Review.created_at >= cutoff,
-            )
-            .group_by(func.date_trunc("month", Review.created_at))
-        )
-        reviews_map = {str(row.month): row.cnt for row in reviews_result}
+        current = now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last = current.year * 12 + current.month - 1
+        periods = [current.replace(year=n // 12, month=n % 12 + 1) for n in range(last - months + 1, last + 1)]
+        cutoff = periods[0]
 
-        replies_result = await self.db.execute(
-            select(
-                func.date_trunc("month", Reply.created_at).label("month"),
-                func.count().label("cnt"),
+        async def count_by_month(model, *filters):
+            date = model.created_at
+            month = (
+                func.strftime("%Y-%m", date) if self.db.bind.dialect.name == "sqlite"
+                else func.to_char(func.timezone("UTC", date), "YYYY-MM")
             )
-            .where(
-                Reply.business_id == business_id,
-                Reply.created_at >= cutoff,
-            )
-            .group_by(func.date_trunc("month", Reply.created_at))
-        )
-        replies_map = {str(row.month): row.cnt for row in replies_result}
+            rows = await self.db.execute(select(month, func.count()).where(
+                model.business_id == business_id, date >= cutoff, *filters,
+            ).group_by(month))
+            return dict(rows.tuples().all())
 
-        ai_result = await self.db.execute(
-            select(
-                func.date_trunc("month", UsageMetric.created_at).label("month"),
-                func.count().label("cnt"),
-            )
-            .where(
-                UsageMetric.business_id == business_id,
-                UsageMetric.metric_type == "ai_generation",
-                UsageMetric.created_at >= cutoff,
-            )
-            .group_by(func.date_trunc("month", UsageMetric.created_at))
-        )
-        ai_map = {str(row.month): row.cnt for row in ai_result}
-
-        results = []
-        for i in range(months - 1, -1, -1):
-            month_start = (cutoff.replace(day=1) + timedelta(days=30 * i)).replace(
-                day=1
-            )
-            key = month_start.strftime("%Y-%m-%d")
-            month_label = month_start.strftime("%Y-%m")
-            results.append({
-                "month": month_label,
-                "reviews": reviews_map.get(key, 0),
-                "replies": replies_map.get(key, 0),
-                "ai_generations": ai_map.get(key, 0),
-            })
-
-        return results
+        reviews = await count_by_month(Review)
+        replies = await count_by_month(Reply)
+        generations = await count_by_month(UsageMetric, UsageMetric.metric_type == "ai_generation")
+        return [
+            {"month": month, "reviews": reviews.get(month, 0), "replies": replies.get(month, 0),
+             "ai_generations": generations.get(month, 0)}
+            for month in (date.strftime("%Y-%m") for date in periods)
+        ]

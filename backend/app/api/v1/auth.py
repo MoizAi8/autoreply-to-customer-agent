@@ -1,18 +1,18 @@
-from __future__ import annotations
-
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_db
+from app.core.config import settings
+from app.core.dependencies import get_current_user, get_db, limiter
 from app.models.user import User
 from app.schemas.auth import (
     AuthUserResponse,
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    MFALoginRequest,
     MFAVerifyRequest,
     RefreshTokenRequest,
     ResetPasswordRequest,
@@ -29,7 +29,10 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 
 @router.post("/register", response_model=SuccessResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: SignupRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/hour")
+async def register(request: Request, body: SignupRequest, db: AsyncSession = Depends(get_db)):
+    if not settings.ALLOW_SIGNUPS:
+        raise HTTPException(status_code=403, detail="Registration is disabled")
     try:
         service = AuthService(db)
         result = await service.register(
@@ -50,7 +53,8 @@ async def register(body: SignupRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=SuccessResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("15/minute")
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
         service = AuthService(db)
         result = await service.login(email=body.email, password=body.password)
@@ -63,20 +67,24 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/verify-email", response_model=SuccessResponse)
-async def verify_email(body: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def verify_email(request: Request, body: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
     try:
         service = AuthService(db)
         result = await service.verify_email(token=body.token)
         return SuccessResponse(message="Email verified successfully", data=result)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Email verification failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred")
 
 
 @router.post("/forgot-password", response_model=SuccessResponse)
-async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/hour")
+async def forgot_password(request: Request, body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     try:
         service = AuthService(db)
         result = await service.forgot_password(email=body.email)
@@ -87,13 +95,16 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
 
 
 @router.post("/reset-password", response_model=SuccessResponse)
-async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def reset_password(request: Request, body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
     try:
         service = AuthService(db)
         result = await service.reset_password(token=body.token, new_password=body.new_password)
         return SuccessResponse(message="Password reset successfully", data=result)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Password reset failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred")
@@ -113,7 +124,8 @@ async def setup_mfa(current_user: User = Depends(get_current_user), db: AsyncSes
 
 
 @router.post("/mfa/verify", response_model=SuccessResponse)
-async def verify_mfa(body: MFAVerifyRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@limiter.limit("6/minute")
+async def verify_mfa(request: Request, body: MFAVerifyRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
         service = AuthService(db)
         result = await service.verify_mfa(user_id=current_user.id, code=body.code)
@@ -144,14 +156,27 @@ async def get_current_user_profile(
     )
 
 
+@router.post("/mfa/login", response_model=SuccessResponse)
+@limiter.limit("6/minute")
+async def complete_mfa_login(request: Request, body: MFALoginRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await AuthService(db).complete_mfa_login(body.challenge_token, body.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return SuccessResponse(message="Login successful", data=result)
+
+
 @router.post("/refresh", response_model=SuccessResponse)
-async def refresh_token(body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("40/minute")
+async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     try:
         service = AuthService(db)
         result = await service.refresh_token(refresh_token=body.refresh_token)
         return SuccessResponse(message="Token refreshed", data=result)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Token refresh failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred")

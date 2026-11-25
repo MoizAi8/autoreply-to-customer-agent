@@ -4,6 +4,7 @@ export interface User {
   full_name: string
   is_active: boolean
   is_verified: boolean
+  is_superuser: boolean
   business_id: string
   created_at: string
 }
@@ -35,6 +36,8 @@ export interface BrandVoice {
   professional_level: number
   personalization_level: number
   custom_instructions: string
+  support_contact: string
+  escalation_rules: string
 }
 
 export interface Review {
@@ -43,6 +46,7 @@ export interface Review {
   platform: string
   platform_review_id: string
   customer_name: string
+  title: string | null
   rating: number
   review_text: string
   review_date: string
@@ -56,10 +60,11 @@ export interface Review {
   is_flagged: boolean
   flag_reason: string | null
   language: string
-  metadata: any
+  metadata: Record<string, unknown> | null
   created_at: string
   replied_at: string | null
-  reply?: Reply
+  reply?: Reply | null
+  is_processed: boolean
 }
 
 export interface Reply {
@@ -74,6 +79,7 @@ export interface Reply {
   confidence_score: number | null
   is_ai_generated: boolean
   human_edited: boolean
+  workflow_steps: { step: string; status: string; duration_ms: number }[]
   edited_by: string | null
   published_at: string | null
   created_at: string
@@ -82,6 +88,11 @@ export interface Reply {
 export interface DashboardStats {
   total_reviews: number
   pending_replies: number
+  approved_replies: number
+  published_replies: number
+  completion_rate: number
+  ratings: Record<string, number>
+  sentiments: Record<string, number>
   auto_replied: number
   manual_replies: number
   avg_rating: number

@@ -44,7 +44,11 @@ class MFASetupResponse(BaseModel):
 
 
 class MFAVerifyRequest(BaseModel):
-    code: str = Field(..., min_length=6, max_length=6)
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class MFALoginRequest(MFAVerifyRequest):
+    challenge_token: str = Field(min_length=1, max_length=2048)
 
 
 class RefreshTokenRequest(BaseModel):
