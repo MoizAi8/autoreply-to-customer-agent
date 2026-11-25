@@ -8,6 +8,7 @@ from app.models.knowledge_base import KnowledgeBaseEntry
 from app.models.audit_log import AuditLog
 from app.models.api_key import ApiKey
 from app.models.usage import UsageMetric
+from app.models.drafting import DraftBudget, DraftJob
 
 __all__ = [
     "User",
@@ -20,4 +21,6 @@ __all__ = [
     "AuditLog",
     "ApiKey",
     "UsageMetric",
+    "DraftBudget",
+    "DraftJob",
 ]

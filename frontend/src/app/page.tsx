@@ -1,69 +1,66 @@
 import Link from 'next/link'
-import { ArrowRight, BarChart3, Inbox, MessageSquareText, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowDown, ArrowRight, BarChart3, Check, ClipboardCheck, Globe2, Inbox, MessageSquareText, ShieldCheck, Sparkles } from 'lucide-react'
+import { WorkflowPreview } from '@/components/marketing/workflow'
+import styles from './marketing.module.css'
 
-const features = [
-  { title: 'One review inbox', description: 'Collect feedback manually or import a CSV. Find the reviews that need attention with rating, date and response filters.', icon: Inbox },
-  { title: 'A response studio', description: 'Use business context to draft a reply, then edit and approve it before sharing it with a customer.', icon: Sparkles },
-  { title: 'Feedback you can measure', description: 'Track ratings, sentiment and response completion using reviews from your workspace.', icon: BarChart3 },
+const questions = [
+  ['How does AI drafting work?', 'The workflow evaluates the review and gathers context from your business profile and knowledge entries. Google Gemini produces a draft for your team to review.'],
+  ['How can I import reviews?', 'Add feedback individually or upload a UTF-8 CSV. The import validates rows and checks for duplicate reviews.'],
+  ['What happens when I approve a reply?', 'Approval changes the internal response status. You can copy an approved reply and share it through the original review platform.'],
+  ['Can I create a workspace?', 'Use a registration invitation from the workspace operator. Sign-in gives each account its own business workspace.'],
+  ['How are AI limits enforced?', 'Each account has a daily allowance and the deployment has a shared cap. The workflow screen shows your remaining allowance.'],
+  ['Where is business context used?', 'The drafting workflow uses your saved business profile, voice preferences, and relevant knowledge entries.'],
+  ['How is data handled?', 'Workspace queries are scoped to your authenticated business. If you enable AI drafting, review content and relevant business context are sent to the configured provider.'],
+]
+const industries = [
+  ['Restaurants', 'Acknowledge timing, service and dietary feedback.'],
+  ['E-commerce', 'Keep shipping and returns communication consistent.'],
+  ['Hospitality', 'Route sensitive guest concerns for internal review.'],
+  ['Local businesses', 'Stay on top of feedback across service locations.'],
+  ['Service teams', 'Respond consistently to recurring support themes.'],
+  ['Retail', 'Track feedback on products and in-store service.'],
 ]
 
 export default function Home() {
-  const demoOnly = process.env.NEXT_PUBLIC_PORTFOLIO_DEMO === 'true'
   return (
-    <div className="min-h-screen bg-[#101318] text-[#f3f3ee] selection:bg-[#c9f68a] selection:text-[#101318]">
-      <header className="mx-auto flex max-w-7xl items-center justify-between px-6 py-7 lg:px-12">
-        <Link href="/" className="inline-flex items-center gap-3 text-lg font-semibold tracking-tight">
-          <span className="grid size-9 place-items-center rounded-xl bg-[#c9f68a] text-[#101318]"><MessageSquareText className="size-5" /></span>
-          AutoReply AI
-        </Link>
-        {demoOnly ? <span className="text-sm text-[#acb1ba]">Portfolio demo</span> : <Link href="/login" className="rounded-full border border-white/20 px-5 py-2 text-sm hover:bg-white/10">Sign in</Link>}
+    <div className={styles.site}>
+      <header className={styles.header}>
+        <Link className={styles.brand} href="/"><span><MessageSquareText size={20} /></span>AutoReply<span className={styles.brandSuffix}>AI</span></Link>
+        <nav aria-label="Primary navigation"><Link href="/features">Features</Link><Link href="/how-it-works">How it works</Link><Link href="/integrations">Integrations</Link></nav>
+        <Link className={styles.headerAction} href="/login">Sign in <ArrowRight size={15} /></Link>
       </header>
-      <main className="mx-auto max-w-7xl px-6 lg:px-12">
-        <section className="grid items-center gap-12 py-12 md:py-24 lg:grid-cols-[1fr_0.9fr] lg:gap-20">
-          <div>
-            <h1 className="max-w-2xl text-5xl font-semibold leading-[1.03] tracking-[-0.065em] sm:text-6xl lg:text-7xl">
-              Give every review a <span className="text-[#c9f68a]">thoughtful reply.</span>
-            </h1>
-            <p className="mt-6 max-w-lg text-lg leading-relaxed text-[#acb1ba]">Manage customer feedback, write in your business’s voice and keep your team in control of every response.</p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              {demoOnly ? <Link href="/demo" className="inline-flex items-center gap-3 rounded-full bg-[#c9f68a] px-6 py-3 text-sm font-semibold text-[#101318] hover:bg-[#dbffac]">Try sample workspace <ArrowRight className="size-4" /></Link> : <>
-                <Link href="/login" className="inline-flex items-center gap-3 rounded-full bg-[#c9f68a] px-6 py-3 text-sm font-semibold text-[#101318] hover:bg-[#dbffac]">Open workspace <ArrowRight className="size-4" /></Link>
-                <Link href="/demo" className="inline-flex items-center rounded-full border border-white/20 px-6 py-3 text-sm font-semibold hover:bg-white/10">Try sample workspace</Link>
-              </>}
-            </div>
+      <main>
+        <section className={styles.hero}>
+          <div className={styles.heroCopy}>
+            <span className={styles.eyebrow}><i /> REPUTATION OPERATIONS</span>
+            <h1><span>Every review</span><span>deserves an</span><span className={styles.accent}>intelligent response.</span></h1>
+            <p>Understand customer feedback, write in your business’s voice, and keep your team in control of every response.</p>
+            <div className={styles.actions}><Link className={styles.primary} href="/login">Launch workspace <ArrowRight size={18} /></Link><a className={styles.secondary} href="#features">Explore features <ArrowDown size={17} /></a></div>
           </div>
-          <div className="rounded-3xl border border-white/10 bg-[#161b22] p-5 shadow-2xl shadow-black/30 sm:p-7">
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-4">
-              <div className="flex items-center gap-2 text-sm font-semibold"><Inbox className="size-4 text-[#c9f68a]" /> Review inbox</div>
-              <span className="text-xs text-[#acb1ba]">Sample preview</span>
-            </div>
-            <div className="pt-5">
-              <div className="flex justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#303f30] text-xs font-semibold text-[#c9f68a]">MT</span>
-                  <div><p className="text-sm font-medium">Morgan T.</p><p className="text-xs text-[#acb1ba]">Delivery feedback</p></div>
-                </div>
-                <span className="text-sm tracking-wider text-[#e8c879]" aria-label="3 out of 5 stars">★★★☆☆</span>
-              </div>
-              <p className="mt-4 text-sm leading-relaxed text-[#d9dce0]">The order arrived a day late, but your support team kept me updated.</p>
-              <div className="mt-5 rounded-2xl border border-white/10 bg-[#101318] p-4">
-                <div className="flex items-center justify-between gap-2 text-xs font-medium"><span className="flex items-center gap-2"><Sparkles className="size-4 text-[#c9f68a]" /> Response draft</span><span className="rounded-full bg-[#303f30] px-2.5 py-1 text-[#c9f68a]">Needs approval</span></div>
-                <p className="mt-3 text-sm leading-relaxed text-[#aeb5bd]">Thanks for your patience, Morgan. We’re sorry your order arrived late and glad our team could keep you informed.</p>
-              </div>
-            </div>
+          <div className={styles.heroVisual}><WorkflowPreview /></div>
+        </section>
+        <div className={styles.signal}><span><Inbox size={16} /> Review intake</span><span><Sparkles size={16} /> Contextual drafts</span><span><ClipboardCheck size={16} /> Human approval</span><span><BarChart3 size={16} /> Real workspace metrics</span></div>
+        <section id="features" className={styles.section}>
+          <div className={styles.sectionHead}><span className={styles.eyebrow}>THE WORKSPACE</span><h2>From scattered feedback to a clear next action.</h2><p>See what customers are saying, decide what needs attention, and keep a record of how your team responded.</p></div>
+          <div className={styles.features}>
+            <article className={styles.featureMajor}><Inbox size={24} /><h3>One inbox for the reviews you manage</h3><p>Collect reviews manually or through a CSV. Filter by sentiment, rating, date and response status.</p><div className={styles.example}><span>Inbox controls</span><div><span>Rating</span><span>Sentiment</span><span>Response status</span></div><div>Review detail <ArrowRight size={15} /></div></div></article>
+            <article><Sparkles size={23} /><h3>Draft in your own voice</h3><p>Use business context and response preferences. Edit, regenerate, or approve a draft from the studio.</p></article>
+            <article><BarChart3 size={23} /><h3>See where attention is needed</h3><p>Track feedback, ratings and completion with metrics calculated from review records.</p></article>
+            <article><ShieldCheck size={23} /><h3>Retain review control</h3><p>Tenant-scoped records, bounded AI usage and a human approval step.</p><Link href="/privacy">Read about data handling <ArrowRight size={15} /></Link></article>
           </div>
         </section>
-        <section aria-label="Workspace features" className="grid gap-8 border-y border-white/10 py-10 md:grid-cols-3">
-          {features.map(({ title, description, icon: Icon }) => (
-            <div key={title}>
-              <Icon className="size-5 text-[#c9f68a]" />
-              <h2 className="mt-3 font-semibold">{title}</h2>
-              <p className="mt-2 max-w-sm text-sm leading-relaxed text-[#acb1ba]">{description}</p>
-            </div>
-          ))}
+        <section className={styles.process}>
+          <div><span className={styles.eyebrow}>THE PIPELINE</span><h2>One review. A traceable workflow.</h2><p>Review and response activity stays available alongside the customer feedback.</p><Link className={styles.secondary} href="/how-it-works">See workflow details <ArrowRight size={16} /></Link></div>
+          <ol>{['Collect and validate the review', 'Assess sentiment, intent and risk', 'Retrieve business context and draft', 'Review, edit and approve', 'Track response activity and trends'].map((name, index) => <li key={name}><span>{String(index + 1).padStart(2, '0')}</span>{name}<Check size={16} /></li>)}</ol>
         </section>
-        <footer className="flex items-center gap-2 py-8 text-sm text-[#acb1ba]"><ShieldCheck className="size-4" /> Team approval before publishing</footer>
+        <section className={styles.section}>
+          <div className={styles.sectionHead}><span className={styles.eyebrow}><Globe2 size={14} /> USE CASES</span><h2>Built around the feedback you receive.</h2></div>
+          <div className={styles.industry}>{industries.map(([name, description]) => <article key={name}><h3>{name}</h3><p>{description}</p></article>)}</div>
+        </section>
+        <section className={styles.faq}><div><span className={styles.eyebrow}>PRODUCT QUESTIONS</span><h2>Good to know.</h2></div><div>{questions.map(([question, answer]) => <details key={question}><summary>{question}<span aria-hidden="true">+</span></summary><p>{answer}</p></details>)}</div></section>
+        <section className={styles.closing}><h2>Build a better response to every review.</h2><Link className={styles.primary} href="/login">Launch workspace <ArrowRight size={18} /></Link></section>
       </main>
+      <footer className={styles.footer}><Link href="/">AutoReply AI</Link><nav aria-label="Footer navigation"><Link href="/about">About</Link><Link href="/support">Support</Link><Link href="/privacy">Privacy</Link><a href="https://github.com/MoizAi8/autoreply-to-customer-agent">GitHub</a></nav></footer>
     </div>
   )
 }

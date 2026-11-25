@@ -1,4 +1,5 @@
 import logging
+import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -32,7 +33,9 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 @limiter.limit("5/hour")
 async def register(request: Request, body: SignupRequest, db: AsyncSession = Depends(get_db)):
     if not settings.ALLOW_SIGNUPS:
-        raise HTTPException(status_code=403, detail="Registration is disabled")
+        expected = settings.REGISTRATION_INVITE
+        if not expected or not secrets.compare_digest((body.invite_code or "").encode(), expected.encode()):
+            raise HTTPException(status_code=403, detail="Registration is restricted to valid invitations")
     try:
         service = AuthService(db)
         result = await service.register(
@@ -42,7 +45,7 @@ async def register(request: Request, body: SignupRequest, db: AsyncSession = Dep
             business_name=body.business_name,
         )
         return SuccessResponse(
-            message="Registration successful. Please check your email to verify.",
+            message="Workspace created. You can sign in.",
             data=result,
         )
     except ValueError as exc:

@@ -58,7 +58,7 @@ class Review(Base):
         DateTime(timezone=True), default=now, onupdate=now
     )
 
-    reply = relationship("Reply", back_populates="review", uselist=False)
+    reply = relationship("Reply", back_populates="review", uselist=False, cascade="all, delete-orphan")
 
     @property
     def review_text(self) -> str:

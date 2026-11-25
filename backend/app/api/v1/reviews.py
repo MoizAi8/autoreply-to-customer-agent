@@ -5,7 +5,7 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -17,6 +17,7 @@ from app.models.usage import UsageMetric
 from app.models.user import User
 from app.schemas.common import SuccessResponse
 from app.schemas.reply import ReplyResponse, ReplyUpdateRequest
+from app.schemas.drafting import AutomationRule, DraftJobView, JobState
 from app.schemas.review import (
     FlagReviewRequest,
     GenerateReplyRequest,
@@ -29,6 +30,7 @@ from app.schemas.review import (
 )
 from app.services.reply_service import ReplyService, translate_generation_error
 from app.services.audit_service import AuditService
+from app.services.drafting_service import DraftingService
 from app.services.review_service import ReviewService
 from app.utils.helpers import as_utc
 from sqlalchemy import func
@@ -123,11 +125,22 @@ async def create_review(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await AuditService(db).log(business.id, user.id, "review_added", "review", str(review.id))
+    drafts = DraftingService(db)
+    rule = drafts.automation_rule(business)
+    if rule.enabled and rule.min_rating <= review.rating <= rule.max_rating:
+        business_id, review_id, user_id = business.id, review.id, user.id
+        await db.commit()
+        try:
+            await drafts.run(business_id, user_id, review_id, GenerateReplyRequest(language=rule.language), trigger="automation")
+        except (HTTPException, ValueError):
+            await db.rollback()
+        return await service.get_review(business_id, review_id)
     return await service.get_review(business.id, review.id)
 
 
 @router.get("/workflow")
 async def workflow_status(
+    user: User = Depends(get_current_user),
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
 ):
@@ -137,8 +150,48 @@ async def workflow_status(
     generated = await db.scalar(select(func.count()).where(
         UsageMetric.business_id == business.id, UsageMetric.metric_type == "ai_generation",
     ))
-    return {"ai_enabled": bool(settings.AI_GENERATION_ENABLED and settings.OPENAI_API_KEY),
-            "awaiting_approval": awaiting, "generated": generated}
+    return {"ai_enabled": settings.ai_ready, "provider": settings.AI_PROVIDER, "model": settings.ai_model,
+            "awaiting_approval": awaiting, "generated": generated,
+            "remaining_today": await DraftingService(db).remaining(user.id), "daily_limit": settings.AI_USER_DAILY_LIMIT}
+
+
+@router.get("/automation", response_model=AutomationRule)
+async def get_automation(business: Business = Depends(get_current_business)):
+    return DraftingService.automation_rule(business)
+
+
+@router.patch("/automation", response_model=AutomationRule)
+async def set_automation(
+    body: AutomationRule,
+    business: Business = Depends(get_current_business),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DraftingService(db).update_rule(business.id, body)
+
+
+@router.get("/jobs", response_model=list[DraftJobView])
+async def draft_jobs(
+    state: JobState | None = None,
+    business: Business = Depends(get_current_business),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DraftingService(db).jobs(business.id, state)
+
+
+@router.post("/jobs/{job_id}/retry", response_model=SuccessResponse)
+@limiter.shared_limit("5/minute", scope="ai-drafting")
+async def retry_drafting(
+    request: Request,
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    business: Business = Depends(get_current_business),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        reply = await DraftingService(db).retry(business.id, user.id, job_id)
+    except ValueError as exc:
+        raise translate_generation_error(exc) from exc
+    return SuccessResponse(message="Draft generated", data={"reply_id": str(reply.id)})
 
 
 @router.post("/import")
@@ -152,6 +205,15 @@ async def import_reviews(
         return await ReviewService(db).import_csv(business.id, body.csv, user.id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/import/preview")
+async def preview_import(body: CSVImportRequest, business: Business = Depends(get_current_business)):
+    try:
+        entries, errors = ReviewService.parse_csv(body.csv)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"valid": len(entries), "sample": [row.model_dump() for row in entries[:5]], "errors": errors}
 
 
 @router.get("/{review_id}", response_model=ReviewResponse)
@@ -208,6 +270,9 @@ async def delete_review(
         review = await service.get_review(business_id=business.id, review_id=review_id)
         if not review:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+        await db.execute(delete(AuditLog).where(
+            AuditLog.business_id == business.id, AuditLog.resource_type == "review", AuditLog.resource_id == str(review.id),
+        ))
         await db.delete(review)
         await db.flush()
         return SuccessResponse(message="Review deleted")
@@ -231,7 +296,8 @@ async def review_history(
         AuditLog.resource_type == "review",
         AuditLog.resource_id == str(review_id),
     ).order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(50))
-    return [{"id": str(row.id), "action": row.action, "created_at": as_utc(row.created_at)} for row in rows.scalars()]
+    return [{"id": str(row.id), "action": row.action, "created_at": as_utc(row.created_at),
+             "response_version": (row.details or {}).get("response_version")} for row in rows.scalars()]
 
 
 @router.put("/{review_id}/draft", response_model=ReplyResponse)
@@ -262,11 +328,10 @@ async def generate_reply(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        service = ReplyService(db)
-        reply = await service.generate_reply(
-            business_id=business.id, review_id=review_id, custom_instructions=body.instructions()
-        )
+        reply = await DraftingService(db).run(business.id, current_user.id, review_id, body)
         return SuccessResponse(message="Reply generated successfully", data={"reply_id": str(reply.id), "content": reply.content})
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise translate_generation_error(exc) from exc
     except Exception as exc:

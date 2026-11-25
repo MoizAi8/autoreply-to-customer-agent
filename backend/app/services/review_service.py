@@ -74,7 +74,8 @@ class ReviewService:
         data["platform_review_id"] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         return await self.ingest_review(business_id, "manual", data)
 
-    async def import_csv(self, business_id: UUID, content: str, user_id: UUID) -> dict[str, Any]:
+    @staticmethod
+    def parse_csv(content: str) -> tuple[list[ManualReviewRequest], list[dict[str, Any]]]:
         entries = []
         errors = []
         reader = csv.DictReader(io.StringIO(content.lstrip("\ufeff"), newline=""), strict=True)
@@ -102,6 +103,10 @@ class ReviewService:
             raise ValueError(f"Malformed CSV near line {reader.line_num}.") from exc
         if not entries and not errors:
             raise ValueError("The CSV contains no reviews.")
+        return entries, errors
+
+    async def import_csv(self, business_id: UUID, content: str, user_id: UUID) -> dict[str, Any]:
+        entries, errors = self.parse_csv(content)
         imported = duplicates = 0
         audit = AuditService(self.db)
         for entry in entries:
@@ -146,6 +151,7 @@ class ReviewService:
                     Review.content.icontains(filters.search, autoescape=True),
                     Review.customer_name.icontains(filters.search, autoescape=True),
                     Review.title.icontains(filters.search, autoescape=True),
+                    Review.reply.has((Reply.business_id == business_id) & Reply.content.icontains(filters.search, autoescape=True)),
                 )
             )
 

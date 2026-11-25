@@ -32,24 +32,26 @@ async function fit(page: Page) {
   expect(width.content).toBeLessThanOrEqual(width.viewport)
 }
 
-for (const viewport of [{ width: 1440, height: 960 }, { width: 820, height: 1100 }, { width: 390, height: 844 }]) {
-  test('public sample is self-contained at ' + viewport.width + ' pixels', async ({ page }) => {
+for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 900 }, { width: 1366, height: 768 }, { width: 768, height: 1024 }, { width: 390, height: 844 }, { width: 360, height: 640 }]) {
+  test('public workflow and sign-in work at ' + viewport.width + ' pixels', async ({ page }) => {
     await page.setViewportSize(viewport)
     const errors: string[] = []
     const apiCalls: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     page.on('request', (request) => { if (request.url().includes('/api/')) apiCalls.push(request.url()) })
     await page.goto('/')
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Give every review a thoughtful reply.')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(/Every review.*deserves an.*intelligent response./)
     await fit(page)
     if (viewport.width === 1440) await page.screenshot({ path: path.join(evidence, 'landing.png'), fullPage: true })
-    await page.getByRole('link', { name: 'Try sample workspace' }).click()
-    await expect(page.getByRole('heading', { name: 'Sample workspace' })).toBeVisible()
-    await page.getByRole('button', { name: /Casey R/ }).click()
-    await page.getByLabel('Sample response').fill('Thank you for visiting our shop, Casey.')
-    await page.getByRole('button', { name: 'Approve draft' }).click()
-    await expect(page.getByRole('status')).toHaveText('Draft approved')
-    await expect(page.getByRole('button', { name: /Casey R.*Approved/ })).toBeVisible()
+    if (viewport.width === 390) await page.screenshot({ path: path.join(evidence, 'landing-mobile.png'), fullPage: true })
+    await page.getByRole('button', { name: 'Next stage' }).click()
+    await expect(page.getByRole('button', { name: 'Sentiment and intent' })).toHaveAttribute('aria-pressed', 'true')
+    await page.getByRole('button', { name: 'Human approval' }).click()
+    await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible()
+    await page.locator('summary').filter({ hasText: 'How can I import reviews?' }).click()
+    await expect(page.getByText(/Add feedback individually/)).toBeVisible()
+    await page.getByRole('link', { name: 'Launch workspace' }).first().click()
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
     await fit(page)
     expect(apiCalls).toEqual([])
     expect(errors).toEqual([])
@@ -76,6 +78,7 @@ test('complete authenticated review workflow persists through reload', async ({ 
   await expect(page.getByRole('link', { name: /Jordan Lee/ })).toBeVisible()
   await page.getByRole('button', { name: 'Import CSV' }).click()
   await page.getByLabel('CSV file').setInputFiles({ name: 'synthetic.csv', mimeType: 'text/csv', buffer: Buffer.from('rating,content,customer_name\n2,Delivery arrived late.,Avery Stone\n4,Support answered the same day.,Riley Kim\n7,Invalid rating,Invalid Example') })
+  await page.getByRole('button', { name: 'Preview import' }).click()
   await page.getByRole('button', { name: 'Import reviews' }).click()
   await expect(page.getByRole('status')).toContainText('2 imported')
   await expect(page.getByRole('status')).toContainText('1 invalid rows')
@@ -95,6 +98,12 @@ test('complete authenticated review workflow persists through reload', async ({ 
   await page.getByRole('textbox', { name: 'Response', exact: true }).fill('Thank you, Jordan. We’re glad your pickup was ready early and that our team could help.')
   await page.getByRole('button', { name: 'Save draft' }).click()
   await expect(page.getByText('Draft saved.', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Search workspace' }).click()
+  await page.getByLabel('Search term').fill('ready early')
+  const search = page.getByRole('dialog', { name: 'Search workspace' })
+  await search.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(search.getByRole('link', { name: /Jordan Lee/ })).toBeVisible()
+  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(page.getByText('Draft approved.', { exact: false }).first()).toBeVisible()
   await page.reload()

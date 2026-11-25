@@ -30,7 +30,7 @@ class KnowledgeService:
         self.db = db
 
     async def _generate_embedding(self, text: str) -> list[float]:
-        if not settings.AI_GENERATION_ENABLED or not settings.OPENAI_API_KEY:
+        if settings.AI_PROVIDER != "openai" or not settings.ai_ready:
             return []
         try:
             async with AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.AI_REQUEST_TIMEOUT_SECONDS, max_retries=0) as client:

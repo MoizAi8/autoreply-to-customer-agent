@@ -64,3 +64,19 @@
 .glass-card {
   @apply glass shadow-xl shadow-black/5 dark:shadow-black/40 dark:shadow-emerald-500/5;
 }
+.workflow-console { position:relative; isolation:isolate; min-width:0; max-width: 620px; margin:0; padding:clamp(.8rem, 2.5vw, 1.6rem); background:#11161d; border:1px solid #394632; border-radius:16px; overflow:hidden; box-shadow:0 22px 70px #0007; }
+.workflow-console::before { content:''; position:absolute; inset:0; z-index:-1; pointer-events:none; background:radial-gradient(220px circle at var(--pointer-x, 70%) var(--pointer-y, 40%), #c7fa801e, transparent); }
+.workflow-caption { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding-bottom:1rem; color:#a5afbd; font-size:.76rem; }
+.workflow-caption span:first-child { display:inline-flex; align-items:center; gap:.5rem; color:#f5f7fa; font-weight:650; }
+.workflow-caption svg, .workflow-output-label { color:#c7fa80; }
+.workflow-steps { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.3rem; }
+.workflow-step { min-width:0; display:grid; min-height:61px; margin:0; place-content:center; justify-items:center; gap:.35rem; border:1px solid #252d38; border-radius:7px; background:#0c1014; color:#a5afbd; font-size:clamp(.58rem, 1.03vw, .76rem); }
+.workflow-step[aria-pressed=true], .workflow-step:hover { border-color:#759a52; background:#1d2a19; color:#c7fa80; }
+.workflow-progress { height:2px; background:#252d38; margin:1rem 0; }
+.workflow-progress span { height:100%; display:block; background:#c7fa80; box-shadow:0 0 14px #c7fa8080; }
+.workflow-output { position:relative; min-height:163px; padding:.95rem; border:1px solid #303c31; border-radius:9px; background:#0c1014; }
+.workflow-output-label { display:flex; align-items:center; gap:.45rem; font-size:.76rem; font-weight:650; }
+.workflow-output p { margin:.65rem 0; font-size:1.04rem; color:#f5f7fa; }
+.workflow-output div { color:#a5afbd; font-size:.81rem; line-height:1.55; }
+.workflow-next { margin-top:.8rem; display:flex; align-items:center; gap:.55rem; color:#c7fa80; font-size:.82rem; }
+@media (prefers-reduced-motion: reduce) { .workflow-console::before { display:none; } }

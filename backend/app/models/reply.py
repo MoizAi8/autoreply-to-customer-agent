@@ -51,7 +51,7 @@ class Reply(Base):
 
     @property
     def is_ai_generated(self) -> bool:
-        return (self.ai_metadata or {}).get("source") == "openai"
+        return (self.ai_metadata or {}).get("source") in {"openai", "gemini"}
 
     @property
     def human_edited(self) -> bool:

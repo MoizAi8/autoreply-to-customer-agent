@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from pathlib import Path
+from typing import Any, List, Literal, Optional
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,10 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(Path(__file__).resolve().parents[2] / ".env", Path(__file__).resolve().parents[3] / "backend.env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     PROJECT_NAME: str = "AutoReply AI"
@@ -27,9 +29,28 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o"
+    AI_PROVIDER: Literal["gemini", "openai"] = "gemini"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     AI_GENERATION_ENABLED: bool = False
+    AI_USER_DAILY_LIMIT: int = Field(5, ge=1, le=100)
+    AI_GLOBAL_DAILY_LIMIT: int = Field(30, ge=1, le=1000)
+    AI_MAX_CONCURRENT: int = Field(2, ge=1, le=12)
+
+    @property
+    def ai_api_key(self) -> str:
+        return self.GEMINI_API_KEY.strip() if self.AI_PROVIDER == "gemini" else self.OPENAI_API_KEY.strip()
+
+    @property
+    def ai_model(self) -> str:
+        return self.GEMINI_MODEL if self.AI_PROVIDER == "gemini" else self.OPENAI_MODEL
+
+    @property
+    def ai_ready(self) -> bool:
+        return bool(self.AI_GENERATION_ENABLED and self.ai_api_key)
     AI_REQUEST_TIMEOUT_SECONDS: float = Field(15.0, ge=2, le=18)
     ALLOW_SIGNUPS: bool = False
+    REGISTRATION_INVITE: str = Field(default="", min_length=0, max_length=128)
     AUTO_CREATE_TABLES: bool = False
     APP_URL: str = "http://localhost:3000"
     SMTP_HOST: str = ""
@@ -63,6 +84,7 @@ class Settings(BaseSettings):
             if "sslmode" in url.query:
                 query = dict(url.query)
                 query["ssl"] = query.pop("sslmode")
+                query.pop("channel_binding", None)
                 return url.set(query=query).render_as_string(hide_password=False)
         return v
 
@@ -109,6 +131,8 @@ class Settings(BaseSettings):
     def limit_live_ai_to_provisioned_workspaces(self):
         if self.AI_GENERATION_ENABLED and self.ALLOW_SIGNUPS:
             raise ValueError("Disable public registration before enabling live AI")
+        if self.REGISTRATION_INVITE and len(self.REGISTRATION_INVITE) < 24:
+            raise ValueError("Use an invitation code of at least 24 characters")
         return self
 
     CELERY_BROKER_URL: str = ""

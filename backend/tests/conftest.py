@@ -7,6 +7,8 @@ os.environ.update(
     SECRET_KEY="isolated-unit-and-api-tests-only-000000000000000000",
     DATABASE_URL="sqlite+aiosqlite:///:memory:",
     OPENAI_API_KEY="",
+    AI_PROVIDER="openai",
+    GEMINI_API_KEY="",
     AI_GENERATION_ENABLED="false",
     ALLOW_SIGNUPS="true",
     WEBHOOK_SECRET="",

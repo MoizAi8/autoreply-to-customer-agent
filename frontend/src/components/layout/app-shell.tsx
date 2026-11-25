@@ -5,9 +5,11 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './sidebar'
 import { Navbar } from './navbar'
 import { useAuthStore } from '@/stores/auth-store'
+import { cn } from '@/lib/utils'
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const pathname = usePathname()
 
   const router = useRouter()
@@ -23,8 +25,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      <div className={cn('flex min-w-0 flex-1 flex-col motion-safe:transition-[padding]', sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-64')}>
         <Navbar onMenuClick={() => setSidebarOpen(true)} />
         <main key={pathname} className="mx-auto w-full max-w-screen-2xl min-w-0 flex-1 p-4 sm:p-6 xl:p-8">{children}</main>
       </div>

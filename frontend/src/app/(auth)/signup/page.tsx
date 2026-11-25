@@ -15,6 +15,7 @@ import * as api from '@/lib/api'
 
 const signupSchema = z
   .object({
+    invite_code: z.string().max(128).optional(),
     business_name: z.string().min(2, 'Business name is required'),
     full_name: z.string().min(2, 'Full name is required'),
     email: z.string().email('Please enter a valid email'),
@@ -77,15 +78,15 @@ export default function SignupPage() {
     try {
       await api.signup({
         business_name: data.business_name,
+        invite_code: data.invite_code?.trim() || undefined,
         full_name: data.full_name,
         email: data.email,
         password: data.password,
       })
-      toast.success('Account created! Check your email to verify.')
+      toast.success('Workspace created. You can sign in now.')
       router.push('/login')
-    } catch (err: any) {
-      const message = err?.response?.data?.message || err?.message || 'Something went wrong'
-      toast.error(message)
+    } catch (err: unknown) {
+      toast.error(api.errorMessage(err, 'Could not create your workspace.'))
     } finally {
       setLoading(false)
     }
@@ -104,6 +105,7 @@ export default function SignupPage() {
       </motion.div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        {process.env.NEXT_PUBLIC_INVITE_SIGNUPS === 'true' && <Input label="Invitation code" type="password" autoComplete="off" required {...register('invite_code')} />}
         <motion.div variants={fadeItem}>
           <Input
             label="Business Name"

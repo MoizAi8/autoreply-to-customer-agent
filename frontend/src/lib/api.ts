@@ -11,7 +11,10 @@ export function errorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+export type DraftLanguage = "en" | "ur" | "hi" | "ar" | "de"
+
 type DraftOptions = {
+  language?: DraftLanguage
   tone?: 'professional' | 'friendly' | 'formal' | 'empathetic' | 'concise'
   length?: 'short' | 'medium' | 'long'
 }
@@ -89,6 +92,7 @@ export async function completeMfa(challenge_token: string, code: string): Promis
 
 export async function signup(data: {
   business_name: string
+  invite_code?: string
   full_name: string
   email: string
   password: string
@@ -162,14 +166,59 @@ export async function saveDraft(reviewId: string, content: string): Promise<Repl
   return data
 }
 
-export async function getReviewHistory(reviewId: string): Promise<{ id: string; action: string; created_at: string }[]> {
+export async function getReviewHistory(reviewId: string): Promise<{ id: string; action: string; created_at: string; response_version?: string | null }[]> {
   const { data } = await api.get('/reviews/' + reviewId + '/history')
   return data
 }
 
-export async function getWorkflowStatus(): Promise<{ ai_enabled: boolean; awaiting_approval: number; generated: number }> {
+export async function getWorkflowStatus(): Promise<{ ai_enabled: boolean; provider: string; model: string; awaiting_approval: number; generated: number; remaining_today: number; daily_limit: number }> {
   const { data } = await api.get('/reviews/workflow')
   return data
+}
+
+export interface AutomationRule {
+  enabled: boolean
+  min_rating: number
+  max_rating: number
+  language: DraftLanguage | null
+}
+
+export interface DraftJob {
+  id: string
+  review_id: string
+  state: 'processing' | 'completed' | 'failed'
+  trigger: string
+  error: string | null
+  created_at: string
+  finished_at: string | null
+}
+
+export async function getAutomation(): Promise<AutomationRule> {
+  return (await api.get('/reviews/automation')).data
+}
+
+export async function saveAutomation(rule: AutomationRule): Promise<AutomationRule> {
+  return (await api.patch('/reviews/automation', rule)).data
+}
+
+export async function getDraftJobs(state?: DraftJob['state']): Promise<DraftJob[]> {
+  return (await api.get('/reviews/jobs', { params: { state } })).data
+}
+
+export async function retryDraftJob(id: string): Promise<void> {
+  await api.post('/reviews/jobs/' + id + '/retry')
+}
+
+export async function previewReviewImport(csv: string): Promise<{
+  valid: number
+  sample: { customer_name: string; rating: number; content: string }[]
+  errors: { row: number; message: string }[]
+}> {
+  return (await api.post('/reviews/import/preview', { csv })).data
+}
+
+export async function removeReview(id: string): Promise<void> {
+  await api.delete('/reviews/' + id)
 }
 
 export async function generateReply(reviewId: string, options?: DraftOptions): Promise<{ reply_id: string; content: string }> {

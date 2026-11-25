@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.reply import ReplyResponse, UtcDatetime
+from app.schemas.drafting import DraftLanguage
 from app.utils.helpers import as_utc
 
 
@@ -71,11 +72,13 @@ class GenerateReplyRequest(BaseModel):
     custom_instructions: Optional[str] = Field(None, max_length=2000)
     tone: Optional[Literal["professional", "friendly", "formal", "empathetic", "concise"]] = None
     length: Optional[Literal["short", "medium", "long"]] = None
+    language: DraftLanguage | None = None
 
     def instructions(self) -> str:
         return "\n".join(filter(None, (
             f"Response tone: {self.tone}." if self.tone else "",
             f"Response length: {self.length}." if self.length else "",
+            f"Write the entire customer-facing response in language {self.language}." if self.language else "",
             self.custom_instructions,
         )))
 

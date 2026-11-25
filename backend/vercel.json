@@ -1,0 +1,4 @@
+{
+  "framework": "fastapi",
+  "functions": { "index.py": { "maxDuration": 90 } }
+}

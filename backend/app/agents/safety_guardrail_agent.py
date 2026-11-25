@@ -304,27 +304,28 @@ class SafetyGuardrailAgent:
                         "toxicity",
                     )
 
-        # --- Toxicity check via OpenAI moderation ---
-        try:
-            moderation = await self.client.moderations.create(input=reply_text)
-            if moderation.results:
-                result = moderation.results[0]
-                if result.flagged:
-                    categories = [
-                        cat
-                        for cat, flagged in result.categories.model_dump().items()
-                        if flagged
-                    ]
-                    for cat in categories:
-                        add_violation(
-                            f"toxic_content:{cat}",
-                            "high",
-                            f"Moderation API flagged: {cat}",
-                            0.25,
-                            "toxicity",
-                        )
-        except Exception as exc:
-            logger.warning("Moderation API call failed (keyword fallback applied): %s", exc)
+        if settings.AI_PROVIDER == "openai":
+            # --- Toxicity check via OpenAI moderation ---
+            try:
+                moderation = await self.client.moderations.create(input=reply_text)
+                if moderation.results:
+                    result = moderation.results[0]
+                    if result.flagged:
+                        categories = [
+                            cat
+                            for cat, flagged in result.categories.model_dump().items()
+                            if flagged
+                        ]
+                        for cat in categories:
+                            add_violation(
+                                f"toxic_content:{cat}",
+                                "high",
+                                f"Moderation API flagged: {cat}",
+                                0.25,
+                                "toxicity",
+                            )
+            except Exception as exc:
+                logger.warning("Moderation API call failed (keyword fallback applied): %s", exc)
 
         score = max(0.0, round(score, 2))
         is_safe = score >= (settings.SAFETY_SCORE_THRESHOLD * 100)

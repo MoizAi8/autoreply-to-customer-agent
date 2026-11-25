@@ -16,6 +16,7 @@ from app.models.review import Review
 from app.models.business import Business
 from app.models.brand_voice import BrandVoice
 from app.models.usage import UsageMetric
+from app.agents.provider import analyze_review, create_provider_client
 from app.agents.input_validation_agent import InputValidationAgent
 from app.agents.language_detection_agent import LanguageDetectionAgent
 from app.agents.intent_detection_agent import IntentDetectionAgent
@@ -37,7 +38,23 @@ AGENT_TIMEOUT_SECONDS = 18
 MAX_RETRIES = 0
 
 
+async def _with_provider_retry(operation, *args):
+    for attempt in range(2):
+        try:
+            return await operation(*args)
+        except RateLimitError:
+            raise
+        except (APIConnectionError, APIStatusError) as exc:
+            if attempt or (isinstance(exc, APIStatusError) and exc.status_code < 500):
+                raise
+            await asyncio.sleep(0.5)
+
+
 class GenerationUnavailable(ValueError):
+    pass
+
+
+class GenerationRateLimited(GenerationUnavailable):
     pass
 
 
@@ -59,9 +76,7 @@ class OrchestrationResult(NamedTuple):
 class AIOrchestrator:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
-        self.openai_client = AsyncOpenAI(
-            api_key=settings.OPENAI_API_KEY, timeout=settings.AI_REQUEST_TIMEOUT_SECONDS, max_retries=0
-        )
+        self.openai_client = create_provider_client()
 
         self.input_validator = InputValidationAgent()
         self.language_detector = LanguageDetectionAgent()
@@ -137,6 +152,14 @@ class AIOrchestrator:
                     "duration_ms": duration_ms,
                     "result": result,
                 }
+            except (RateLimitError, APIStatusError) as exc:
+                if isinstance(exc, RateLimitError):
+                    last_error = "RateLimitError"
+                elif exc.status_code in (401, 403):
+                    last_error = "ProviderAuthorizationError"
+                else:
+                    last_error = type(exc).__name__
+                break
             except asyncio.TimeoutError:
                 last_error = f"Timeout ({AGENT_TIMEOUT_SECONDS}s)"
                 logger.warning("%s timeout on attempt %d/%d", step_name, attempt + 1, 1 + max_retries)
@@ -153,6 +176,14 @@ class AIOrchestrator:
             "error": last_error,
             "result": None,
         }
+
+    @staticmethod
+    def _provider_error(step: dict[str, Any], operation: str) -> None:
+        if step.get("error") == "RateLimitError":
+            raise GenerationRateLimited("The AI provider quota is exhausted. Try again after the quota resets.")
+        if step.get("error") == "ProviderAuthorizationError":
+            raise GenerationUnavailable("The AI provider rejected its server configuration.")
+        raise GenerationUnavailable(f"The AI provider could not {operation}. Try again later.")
 
     async def process_review(
         self,
@@ -173,7 +204,7 @@ class AIOrchestrator:
             return OrchestrationResult(existing_reply, {}, metadata.get("decisions", {}), metadata.get("pipeline_log", []))
         if existing_reply and existing_reply.status == "published":
             raise GenerationConflict("Published responses cannot be regenerated")
-        if not settings.AI_GENERATION_ENABLED or not settings.OPENAI_API_KEY:
+        if not settings.ai_ready:
             raise GenerationUnavailable("Live AI drafting is disabled for this deployment")
 
         # Step 1: Input Validation
@@ -189,39 +220,54 @@ class AIOrchestrator:
         if not is_valid:
             raise ValueError("This review needs manual handling before AI drafting")
 
-        # Step 2: Language Detection
-        step = await self._run_agent_step("language_detection", self.language_detector.detect, review_text)
-        ld_result = step.get("result")
-        if ld_result and hasattr(ld_result, "language_code"):
-            review.language = ld_result.language_code
-        pipeline_log.append(step)
+        if settings.AI_PROVIDER == "gemini":
+            step = await self._run_agent_step(
+                "feedback_analysis", _with_provider_retry, analyze_review, self.openai_client, review_text, review.rating,
+            )
+            pipeline_log.append(step)
+            analysis = step["result"]
+            if analysis is None:
+                self._provider_error(step, "analyze this review")
+            review.language = analysis.language
+            review.intent = intent = analysis.intent
+            review.sentiment = sentiment = analysis.sentiment
+            review.sentiment_score = intent_confidence = sentiment_confidence = analysis.confidence
+            sub_intent = "general"
+            urgency = "medium"
+        else:
+            # Step 2: Language Detection
+            step = await self._run_agent_step("language_detection", self.language_detector.detect, review_text)
+            ld_result = step.get("result")
+            if ld_result and hasattr(ld_result, "language_code"):
+                review.language = ld_result.language_code
+            pipeline_log.append(step)
 
-        # Step 3: Intent Detection
-        step = await self._run_agent_step("intent_detection", self.intent_detector.detect,
-                                          review_text, review.title, review.platform, review.rating)
-        id_result = step.get("result")
-        intent = "general_inquiry"
-        intent_confidence = 0.0
-        sub_intent = "general"
-        urgency = "medium"
-        if id_result and hasattr(id_result, "intent"):
-            intent = id_result.intent
-            intent_confidence = id_result.confidence
-            sub_intent = id_result.sub_intent
-            urgency = id_result.urgency
-        review.intent = intent
-        pipeline_log.append(step)
+            # Step 3: Intent Detection
+            step = await self._run_agent_step("intent_detection", self.intent_detector.detect,
+                                              review_text, review.title, review.platform, review.rating)
+            id_result = step.get("result")
+            intent = "general_inquiry"
+            intent_confidence = 0.0
+            sub_intent = "general"
+            urgency = "medium"
+            if id_result and hasattr(id_result, "intent"):
+                intent = id_result.intent
+                intent_confidence = id_result.confidence
+                sub_intent = id_result.sub_intent
+                urgency = id_result.urgency
+            review.intent = intent
+            pipeline_log.append(step)
 
-        # Step 4: Sentiment Analysis
-        step = await self._run_agent_step("sentiment_analysis", self.sentiment_analyzer.analyze, review_text, review.rating)
-        sa_result = step.get("result")
-        if sa_result and hasattr(sa_result, "sentiment"):
-            review.sentiment = sa_result.sentiment
-            review.sentiment_score = sa_result.confidence if hasattr(sa_result, "confidence") else 0.0
-        sentiment = sa_result.sentiment if sa_result and hasattr(sa_result, "sentiment") else "neutral"
-        sentiment_confidence = sa_result.confidence if sa_result and hasattr(sa_result, "confidence") else 0.5
-        sentiment_reasoning = sa_result.reasoning if sa_result and hasattr(sa_result, "reasoning") else ""
-        pipeline_log.append(step)
+            # Step 4: Sentiment Analysis
+            step = await self._run_agent_step("sentiment_analysis", self.sentiment_analyzer.analyze, review_text, review.rating)
+            sa_result = step.get("result")
+            if sa_result and hasattr(sa_result, "sentiment"):
+                review.sentiment = sa_result.sentiment
+                review.sentiment_score = sa_result.confidence if hasattr(sa_result, "confidence") else 0.0
+            sentiment = sa_result.sentiment if sa_result and hasattr(sa_result, "sentiment") else "neutral"
+            sentiment_confidence = sa_result.confidence if sa_result and hasattr(sa_result, "confidence") else 0.5
+            sentiment_reasoning = sa_result.reasoning if sa_result and hasattr(sa_result, "reasoning") else ""
+            pipeline_log.append(step)
 
         # Step 5: Risk Classification
         step = await self._run_agent_step("risk_classification", self.risk_classifier.classify,
@@ -250,22 +296,14 @@ class AIOrchestrator:
         pipeline_log.append(step)
 
         # Step 7: Reply Generation
-        async def generate_draft():
-            for attempt in range(2):
-                try:
-                    return await self.reply_generator.generate(business, review, brand, brand_context, custom_instructions, risk_level)
-                except RateLimitError:
-                    raise
-                except (APIConnectionError, APIStatusError) as exc:
-                    if attempt or isinstance(exc, APIStatusError) and exc.status_code < 500:
-                        raise
-                    await asyncio.sleep(0.5)
-
-        step = await self._run_agent_step("reply_generation", generate_draft)
+        step = await self._run_agent_step(
+            "reply_generation", _with_provider_retry, self.reply_generator.generate,
+            business, review, brand, brand_context, custom_instructions, risk_level,
+        )
         pipeline_log.append(step)
         gen_result = step["result"]
         if gen_result is None:
-            raise GenerationUnavailable("The AI provider did not return a draft. Try again later.")
+            self._provider_error(step, "return a complete draft")
         reply_text = gen_result.reply_text
         gen_raw = gen_result.raw_response
 
@@ -278,20 +316,25 @@ class AIOrchestrator:
         violations = sg_result.violations if sg_result and hasattr(sg_result, "violations") else []
         pipeline_log.append(step)
 
-        # Step 9: Quality Evaluation
-        step = await self._run_agent_step("quality_evaluation", self.quality_evaluator.evaluate,
-                                          reply_text, review, brand, brand_context)
-        qe_result = step.get("result")
-        quality_score = qe_result.overall_score if qe_result and hasattr(qe_result, "overall_score") else 50.0
-        quality_breakdown = qe_result.breakdown if qe_result and hasattr(qe_result, "breakdown") else {}
-        passes_threshold = qe_result.passes_threshold if qe_result and hasattr(qe_result, "passes_threshold") else False
-        pipeline_log.append(step)
+        if settings.AI_PROVIDER == "gemini":
+            quality_score = None
+            quality_breakdown = {}
+            passes_threshold = True
+        else:
+            # Step 9: Quality Evaluation
+            step = await self._run_agent_step("quality_evaluation", self.quality_evaluator.evaluate,
+                                              reply_text, review, brand, brand_context)
+            qe_result = step.get("result")
+            quality_score = qe_result.overall_score if qe_result and hasattr(qe_result, "overall_score") else 50.0
+            quality_breakdown = qe_result.breakdown if qe_result and hasattr(qe_result, "breakdown") else {}
+            passes_threshold = qe_result.passes_threshold if qe_result and hasattr(qe_result, "passes_threshold") else False
+            pipeline_log.append(step)
 
         # Use Workflow Service for decisions
         wf_decision = await self.workflow_service.decide(
             business_id=business_id,
             risk_level=risk_level,
-            quality_score=quality_score,
+            quality_score=quality_score or 0.0,
             safety_score=safety_score,
         )
 
@@ -307,7 +350,7 @@ class AIOrchestrator:
         events = [{key: value for key, value in step.items() if key != "result"} for step in pipeline_log]
 
         ai_meta = {
-            "source": "openai",
+            "source": settings.AI_PROVIDER,
             "pipeline_log": events,
             "decisions": decisions,
             "intent": intent,
@@ -322,14 +365,14 @@ class AIOrchestrator:
             "safety_violations": violations,
             "quality_breakdown": quality_breakdown,
             "generation_usage": gen_raw.get("usage"),
-            "model": gen_raw.get("model", settings.OPENAI_MODEL),
+            "model": gen_raw.get("model", settings.ai_model),
         }
 
         if existing_reply:
             existing_reply.content = reply_text
             existing_reply.status = reply_status
             existing_reply.rejection_reason = None
-            existing_reply.quality_score = quality_score / 100.0
+            existing_reply.quality_score = quality_score / 100.0 if quality_score is not None else None
             existing_reply.safety_score = safety_score
             existing_reply.ai_metadata = ai_meta
             reply = existing_reply
@@ -340,7 +383,7 @@ class AIOrchestrator:
                 review_id=review_id,
                 content=reply_text,
                 status=reply_status,
-                quality_score=quality_score / 100.0,
+                quality_score=quality_score / 100.0 if quality_score is not None else None,
                 safety_score=safety_score,
                 ai_metadata=ai_meta,
             )
@@ -354,7 +397,7 @@ class AIOrchestrator:
         await self._log_usage(
             business_id=business_id,
             metric_type="ai_generation",
-            model=gen_raw.get("model", settings.OPENAI_MODEL),
+            model=gen_raw.get("model", settings.ai_model),
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             duration_ms=total_duration,
@@ -374,6 +417,7 @@ class AIOrchestrator:
                 "auto_approve": decisions["auto_approve"],
                 "reasons": decisions["reasons"],
                 "pipeline_steps": len(pipeline_log),
+                "response_version": reply_text,
                 "total_duration_ms": total_duration,
             },
         )

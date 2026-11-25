@@ -22,3 +22,5 @@ def setup_logging(debug: bool = False) -> None:
 
     for logger_name in ("uvicorn.access", "uvicorn.error", "sqlalchemy.engine"):
         logging.getLogger(logger_name).setLevel(logging.WARNING if not debug else logging.INFO)
+    for logger_name in ("openai", "httpx", "httpcore", "aiosqlite"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)

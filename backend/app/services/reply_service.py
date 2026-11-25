@@ -13,9 +13,9 @@ from app.models.review import Review
 from app.services.audit_service import AuditService
 
 def translate_generation_error(exc: ValueError) -> HTTPException:
-    from app.agents.orchestrator import GenerationConflict, GenerationUnavailable, ReviewNotFound
+    from app.agents.orchestrator import GenerationConflict, GenerationRateLimited, GenerationUnavailable, ReviewNotFound
 
-    status = {GenerationConflict: 409, GenerationUnavailable: 503, ReviewNotFound: 404}
+    status = {GenerationConflict: 409, GenerationUnavailable: 503, GenerationRateLimited: 429, ReviewNotFound: 404}
     return HTTPException(status_code=status.get(type(exc), 400), detail=str(exc))
 
 
@@ -48,7 +48,8 @@ class ReplyService:
     async def _record(self, reply: Reply, action: str, user_id: UUID) -> Reply:
         await AuditService(self.db).log(
             reply.business_id, user_id, action, "review", str(reply.review_id),
-            details={"reply_id": str(reply.id), "status": reply.status},
+            details={"reply_id": str(reply.id), "status": reply.status,
+                     "response_version": reply.content if action in {"draft_created", "draft_updated"} else None},
         )
         return reply
 

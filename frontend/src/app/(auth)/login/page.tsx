@@ -14,7 +14,7 @@ export default function LoginPage() {
   const [challenge, setChallenge] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
-  const signupEnabled = process.env.NEXT_PUBLIC_ALLOW_SIGNUPS === 'true'
+  const signupEnabled = process.env.NEXT_PUBLIC_ALLOW_SIGNUPS === 'true' || process.env.NEXT_PUBLIC_INVITE_SIGNUPS === 'true'
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -50,7 +50,6 @@ export default function LoginPage() {
         {challenge && <Button type="button" variant="ghost" onClick={() => { setChallenge(''); setError('') }}>Back to sign-in</Button>}
       </form>
       {signupEnabled && <p className="mt-5 text-sm text-muted-foreground">Need a workspace? <Link className="text-primary" href="/signup">Create an account</Link></p>}
-      <Link className="mt-4 inline-block text-sm text-primary" href="/demo">Explore sample workspace</Link>
     </div>
   )
 }

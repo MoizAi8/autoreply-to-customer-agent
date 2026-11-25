@@ -21,6 +21,7 @@ build/
 
 # Environment
 .env
+backend.env
 .env.*
 !.env.example
 *.bundle

@@ -13,6 +13,7 @@ import * as api from '@/lib/api'
 import type { Review } from '@/types'
 
 const tones = ['professional', 'friendly', 'formal', 'empathetic', 'concise'] as const
+const languages: { value: api.DraftLanguage; label: string }[] = [{ value: 'en', label: 'English' }, { value: 'ur', label: 'Urdu' }, { value: 'hi', label: 'Hindi' }, { value: 'ar', label: 'Arabic' }, { value: 'de', label: 'German' }]
 const lengths = ['short', 'medium', 'long'] as const
 const actionNames: Record<string, string> = {
   review_added: 'Review added', review_flagged: 'Review flagged', ai_process_review: 'AI draft generated',
@@ -25,7 +26,8 @@ function ResponseStudio({ review }: { review: Review }) {
   const [draft, setDraft] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [tone, setTone] = useState<(typeof tones)[number]>('professional')
+  const [tone, setTone] = useState<(typeof tones)[number] | ''>('')
+  const [language, setLanguage] = useState<api.DraftLanguage | ''>('')
   const [length, setLength] = useState<(typeof lengths)[number]>('medium')
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
@@ -37,15 +39,15 @@ function ResponseStudio({ review }: { review: Review }) {
   const locked = reply?.status === 'published'
   const awaiting = reply?.status === 'pending' || reply?.status === 'pending_approval'
   const refresh = async () => {
-    await Promise.all(['review', 'review-history', 'reviews', 'dashboard-stats', 'workflow', 'sentiment-trends', 'monthly-activity'].map(
+    await Promise.all(['review', 'review-history', 'reviews', 'dashboard-stats', 'workflow', 'draft-jobs', 'sentiment-trends', 'monthly-activity'].map(
       (key) => client.invalidateQueries({ queryKey: [key] }),
     ))
   }
   const action = useMutation({
     mutationFn: async (operation: 'generate' | 'save' | 'approve' | 'reject') => {
       if (operation === 'generate') {
-        if (reply) await api.regenerateReply(reply.id, { tone, length })
-        else await api.generateReply(review.id, { tone, length })
+        if (reply) await api.regenerateReply(reply.id, { tone: tone || undefined, length, language: language || undefined })
+        else await api.generateReply(review.id, { tone: tone || undefined, length, language: language || undefined })
         return 'AI draft generated.'
       }
       if (operation === 'save') {
@@ -87,7 +89,9 @@ function ResponseStudio({ review }: { review: Review }) {
             {history.isLoading && <p className="mt-2 text-sm text-muted-foreground">Loading history…</p>}
             {history.data?.length === 0 && <p className="mt-2 text-sm text-muted-foreground">No recorded activity.</p>}
             <ol className="mt-3 divide-y">{history.data?.map((event) => (
-              <li key={event.id} className="flex flex-wrap justify-between gap-1 py-2 text-sm"><span>{actionNames[event.action] ?? event.action}</span><time className="text-muted-foreground" dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></li>
+              <li key={event.id} className="flex flex-wrap justify-between gap-1 py-2 text-sm"><span>{actionNames[event.action] ?? event.action}</span><time className="text-muted-foreground" dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
+                {event.response_version && <details className="basis-full"><summary className="cursor-pointer text-muted-foreground">View saved version</summary><p className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{event.response_version}</p></details>}
+              </li>
             ))}</ol>
           </Card>
         </div>
@@ -96,11 +100,12 @@ function ResponseStudio({ review }: { review: Review }) {
             <h2 className="text-xl font-semibold tracking-tight">Response studio</h2>
             <Badge variant={reply?.status === 'approved' ? 'success' : 'secondary'} className="capitalize">{reply?.status.replaceAll('_', ' ') ?? 'No draft'}</Badge>
           </div>
-          {reply?.is_ai_generated && <p className="mt-2 text-sm text-muted-foreground">{reply.human_edited ? 'AI draft edited by your team' : 'Draft generated with OpenAI'}</p>}
+          {reply?.is_ai_generated && <p className="mt-2 text-sm text-muted-foreground">{reply.human_edited ? 'AI draft edited by your team' : 'AI-generated draft'}</p>}
           {workflow.data?.ai_enabled && !locked ? (
             <div className="my-4 grid gap-3 sm:grid-cols-2">
-              <label className="text-sm">Tone<select className={field + ' mt-1 capitalize'} value={tone} onChange={(event) => setTone(tones.find((value) => value === event.target.value) ?? tones[0])}>{tones.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label className="text-sm">Tone<select className={field + ' mt-1 capitalize'} value={tone} onChange={(event) => setTone(tones.find((value) => value === event.target.value) ?? '')}><option value="">Saved brand voice</option>{tones.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
               <label className="text-sm">Length<select className={field + ' mt-1 capitalize'} value={length} onChange={(event) => setLength(lengths.find((value) => value === event.target.value) ?? lengths[1])}>{lengths.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label className="text-sm">Language<select className={field + ' mt-1'} value={language} onChange={(event) => setLanguage(languages.find(({ value }) => value === event.target.value)?.value ?? '')}><option value="">Detect from review</option>{languages.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
               <Button variant="secondary" className="w-fit sm:col-span-2" disabled={dirty || action.isPending} onClick={() => action.mutate('generate')}><Sparkles className="mr-2 size-4" />{reply ? 'Regenerate draft' : 'Generate AI draft'}</Button>
             </div>
           ) : <p className="my-4 text-sm text-muted-foreground">{locked ? 'This response is published.' : 'Live AI drafting is unavailable in this workspace. Write and approve a response manually.'}</p>}

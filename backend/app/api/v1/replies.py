@@ -12,6 +12,7 @@ from app.schemas.common import SuccessResponse
 from app.schemas.reply import ReplyRejectRequest, ReplyResponse, ReplyUpdateRequest
 from app.schemas.review import GenerateReplyRequest
 from app.services.reply_service import ReplyService, translate_generation_error
+from app.services.drafting_service import DraftingService
 
 logger = logging.getLogger(__name__)
 
@@ -186,9 +187,7 @@ async def regenerate_reply(
         if not reply:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reply not found")
 
-        reply = await service.regenerate_reply(
-            business_id=business.id, review_id=reply.review_id, custom_instructions=body.instructions()
-        )
+        reply = await DraftingService(db).run(business.id, current_user.id, reply.review_id, body, trigger="regeneration", replace=True)
         return SuccessResponse(message="Reply regenerated", data={"reply_id": str(reply.id), "content": reply.content})
     except HTTPException:
         raise
